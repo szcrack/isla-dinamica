@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Isla Dinámica"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Una píldora flotante arriba de la pantalla que muestra notificaciones y música."
+            android:layout_marginBottom="24dp" />
+
+        <TextView
+            android:id="@+id/tvOverlayStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Superposición: pendiente"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Permitir superposición"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/tvListenerStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Acceso a notificaciones: pendiente"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnListener"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Permitir acceso a notificaciones"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnNotifPermission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Permitir notificaciones (Android 13+)"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/tvServiceStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Isla: detenida"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnToggleService"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Iniciar isla"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Shizuku (permisos avanzados)"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tvShizukuStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Shizuku: comprobando…"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnShizukuPermission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Conceder permiso Shizuku"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnShizukuApply"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Aplicar permisos con Shizuku"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/swHideIcons"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ocultar iconos de la barra de estado"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tvShizukuLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tema de la isla"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <RadioGroup
+            android:id="@+id/rgTheme"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbThemeBlack"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Negro iPhone"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/rbThemeFrosted"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="HyperOS Cristal" />
+
+            <RadioButton
+                android:id="@+id/rbThemeGlow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="HyperOS Brillo" />
+        </RadioGroup>
+
+    </LinearLayout>
+</ScrollView>

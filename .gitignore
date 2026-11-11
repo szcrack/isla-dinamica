@@ -1,0 +1,12 @@
+# Archivos generados y locales — no van al repo
+.gradle/
+local.properties
+*.iml
+.idea/
+build/
+app/build/
+.kotlin/
+
+# Mockups de diseño (webp binarios) — referencias locales, no se suben
+# con el conector de GitHub porque solo acepta archivos de texto UTF-8.
+design/

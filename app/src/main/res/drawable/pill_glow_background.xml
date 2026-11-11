@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Blue-violet gradient border: gradient outer shape, dark inner shape inset by 2dp. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="45"
+                android:startColor="#3B82F6"
+                android:centerColor="#7C3AED"
+                android:endColor="#A855F7" />
+            <corners android:radius="18dp" />
+        </shape>
+    </item>
+    <item
+        android:left="2dp"
+        android:top="2dp"
+        android:right="2dp"
+        android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FF0A0A16" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</layer-list>
