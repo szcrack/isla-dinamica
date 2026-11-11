@@ -113,8 +113,22 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="La hora sigue visible en el panel de control al bajar la barra."
+            android:text="El reloj se oculta solo en el inicio del launcher (ahí la isla muestra la hora) y reaparece en otras apps y en el panel de control."
             android:textSize="12sp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tvUsageAccessStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnUsageAccess"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Conceder acceso a uso (para detectar el launcher)"
             android:layout_marginBottom="8dp" />
 
         <TextView

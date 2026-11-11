@@ -93,3 +93,11 @@ dumpsys deviceidle whitelist +com.rayo.isladinamica
   panel seguía sin aparecer, así que se está probando si es `icon_blacklist`
   quien lo esconde (prueba en el teléfono: lista negra solo con
   `alarm_clock`, sin `clock`).
+- **v1.5** (versionCode 6): el reloj de la barra ahora es contextual: se
+  oculta solo en el inicio del launcher y reaparece en otras apps y en el
+  panel de control. Lo detecta con UsageStats (permiso de acceso a uso,
+  se concede en Ajustes desde la app); sin ese permiso el reloj se oculta
+  en todas partes mientras el interruptor esté activo. La posición vertical
+  ya no puede sacar la isla de la pantalla (y >= 0): la cámara está en el
+  borde superior, así que hacia arriba no hay más que el borde — el ajuste
+  útil es hacia abajo.

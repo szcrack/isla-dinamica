@@ -3,12 +3,14 @@ package com.rayo.isladinamica
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.app.AppOpsManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.app.Service
+import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -25,6 +27,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
+import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -52,6 +56,7 @@ class IslandService : Service() {
         private const val PROGRESS_POLL_MS = 500L
         private const val ANIM_MS = 300L
         private const val MAX_QUEUE = 5
+        private const val CLOCK_POLL_MS = 2000L
         private const val COLLAPSED_W_DP = 64f
         private const val COLLAPSED_H_DP = 48f
         private const val EXPANDED_W_DP = 352f
@@ -119,11 +124,32 @@ class IslandService : Service() {
     private val notifQueue = ArrayDeque<IslandBridge.Notif>()
     private var currentTheme: IslandTheme = IslandTheme.BLACK
 
+    // Launcher-aware clock: the status-bar clock is hidden only on the
+    // launcher home screen (where the island shows the time) and visible
+    // in other apps and in the quick-settings panel. Needs UsageStats
+    // access; without it the clock stays hidden while the toggle is on.
+    private var usageStatsManager: UsageStatsManager? = null
+    private var launcherPackage: String? = null
+    private var clockHidden: Boolean? = null
+    private val clockPollRunnable = object : Runnable {
+        override fun run() {
+            updateLauncherClock()
+            handler.postDelayed(this, CLOCK_POLL_MS)
+        }
+    }
+
     private val prefsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
                 IslandTheme.KEY_THEME -> applyTheme()
                 KEY_OFFSET_X, KEY_OFFSET_Y -> repositionPill()
+                ShizukuHelper.KEY_HIDE_ICONS -> {
+                    // The hide toggle changed: (re)start or stop the
+                    // launcher-aware clock polling and apply it at once.
+                    clockHidden = null
+                    updateLauncherClock()
+                    if (hideIconsEnabled()) startClockPolling() else stopClockPolling()
+                }
             }
         }
 
@@ -177,6 +203,10 @@ class IslandService : Service() {
         setupOverlay()
         setupMediaSessions()
         reapplyHideIcons()
+        usageStatsManager =
+            getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+        launcherPackage = resolveLauncherPackage()
+        if (hideIconsEnabled()) startClockPolling()
         IslandBridge.onNotification = { notif -> showNotification(notif) }
         IslandBridge.onNotificationRemoved = { key -> onNotifRemoved(key) }
     }
@@ -188,6 +218,7 @@ class IslandService : Service() {
     override fun onDestroy() {
         isRunning = false
         instance = null
+        stopClockPolling()
         IslandBridge.onNotification = null
         IslandBridge.onNotificationRemoved = null
         getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
@@ -478,12 +509,16 @@ class IslandService : Service() {
         val offY = dp(prefs.getInt(KEY_OFFSET_Y, 0).toFloat())
         val pillH = collapsedSizePx().second
         val center = cutoutCenter()
-        return if (center != null) {
+        // The island sits on the camera, which is at the very top of the
+        // screen: it cannot go higher than y = 0. Clamp it so a negative
+        // offset never pushes it off-screen (it would just disappear).
+        val (x, y) = if (center != null) {
             val screenW = resources.displayMetrics.widthPixels
             (center.first - screenW / 2 + offX) to (center.second - pillH / 2 + offY)
         } else {
             offX to ((statusBarHeight() - pillH) / 2 + offY)
         }
+        return x to y.coerceAtLeast(0)
     }
 
     /** Moves the live pill window to the current computed position. */
@@ -555,6 +590,103 @@ class IslandService : Service() {
         } catch (e: Exception) {
             // Hiding is best-effort; the island works without it.
         }
+    }
+
+    // ---- Launcher-aware clock ----
+
+    private fun hideIconsEnabled(): Boolean =
+        getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(ShizukuHelper.KEY_HIDE_ICONS, false)
+
+    private fun startClockPolling() {
+        handler.removeCallbacks(clockPollRunnable)
+        updateLauncherClock()
+        handler.postDelayed(clockPollRunnable, CLOCK_POLL_MS)
+    }
+
+    private fun stopClockPolling() {
+        handler.removeCallbacks(clockPollRunnable)
+    }
+
+    /**
+     * Hides the status-bar clock only while the launcher home screen is in
+     * front (where the island shows the time) and shows it everywhere else
+     * — other apps and the quick-settings panel, where it is essential.
+     * The icon_blacklist hides the QS clock too, so the blacklist is the
+     * only thing toggled here; the `cmd statusbar` flags (system and
+     * notification icons) stay applied. Only writes when the state changes.
+     * Without UsageStats access there is nothing to detect, so the clock
+     * stays hidden while the toggle is on (the v1.3 behavior).
+     */
+    private fun updateLauncherClock() {
+        if (!hideIconsEnabled()) return
+        if (!isUsageAccessGranted()) return
+        val foreground = foregroundPackage() ?: return
+        val onLauncher = foreground == launcherPackage
+        val shouldHide = onLauncher
+        if (clockHidden == shouldHide) return
+        clockHidden = shouldHide
+        setClockHidden(shouldHide)
+    }
+
+    /**
+     * Shows or hides just the clock slot of the icon blacklist, leaving the
+     * alarm icon (and everything else) alone. Needs WRITE_SECURE_SETTINGS,
+     * which the app self-grants through Shizuku.
+     */
+    private fun setClockHidden(hide: Boolean) {
+        try {
+            val current =
+                Settings.Secure.getString(contentResolver, "icon_blacklist")
+                    .orEmpty()
+                    .split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .toMutableSet()
+            if (hide) current.add("clock") else current.remove("clock")
+            if (!current.contains("alarm_clock")) current.add("alarm_clock")
+            Settings.Secure.putString(
+                contentResolver,
+                "icon_blacklist",
+                current.joinToString(",")
+            )
+        } catch (e: Exception) {
+            // No WRITE_SECURE_SETTINGS (yet): the clock just stays as it is.
+            clockHidden = null
+        }
+    }
+
+    private fun isUsageAccessGranted(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+            ?: return false
+        return appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            packageName
+        ) == AppOpsManager.MODE_ALLOWED
+    }
+
+    /** The package currently in front, by most recent use. Null if unknown. */
+    private fun foregroundPackage(): String? {
+        val manager = usageStatsManager ?: return null
+        val now = System.currentTimeMillis()
+        val stats = try {
+            manager.queryUsageStats(
+                UsageStatsManager.INTERVAL_BEST,
+                now - 10_000L,
+                now
+            )
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        return stats.maxByOrNull { it.lastTimeUsed }?.packageName
+    }
+
+    /** The default launcher package (the home screen app). */
+    private fun resolveLauncherPackage(): String? {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        return packageManager.resolveActivity(intent, 0)
+            ?.activityInfo?.packageName
     }
 
     private fun toggleExpand() {

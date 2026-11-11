@@ -8,6 +8,11 @@
     <!-- Declared so Shizuku (shell) can grant it with `pm grant`; the app
          writes Settings.Secure.ICON_BLACKLIST with it. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Foreground-app detection (UsageStats): the status-bar clock is hidden
+         only on the launcher home screen and shown in other apps. The user
+         grants this in Settings > Usage access; without it the clock stays
+         hidden everywhere while the toggle is on. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <!-- Package visibility for the Shizuku manager app (API 30+). -->
     <queries>

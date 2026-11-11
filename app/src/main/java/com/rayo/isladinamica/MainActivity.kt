@@ -27,9 +27,11 @@ class MainActivity : Activity() {
     private lateinit var tvService: TextView
     private lateinit var tvShizukuStatus: TextView
     private lateinit var tvShizukuLog: TextView
+    private lateinit var tvUsageAccessStatus: TextView
     private lateinit var btnToggle: Button
     private lateinit var btnShizukuPermission: Button
     private lateinit var btnShizukuApply: Button
+    private lateinit var btnUsageAccess: Button
     private lateinit var swHideIcons: Switch
     private lateinit var rgTheme: RadioGroup
     private lateinit var sbOffsetX: SeekBar
@@ -70,6 +72,11 @@ class MainActivity : Activity() {
         tvService = findViewById(R.id.tvServiceStatus)
         tvShizukuStatus = findViewById(R.id.tvShizukuStatus)
         tvShizukuLog = findViewById(R.id.tvShizukuLog)
+        tvUsageAccessStatus = findViewById(R.id.tvUsageAccessStatus)
+        btnUsageAccess = findViewById(R.id.btnUsageAccess)
+        btnUsageAccess.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
         btnToggle = findViewById(R.id.btnToggleService)
         btnShizukuPermission = findViewById(R.id.btnShizukuPermission)
         btnShizukuApply = findViewById(R.id.btnShizukuApply)
@@ -208,6 +215,28 @@ class MainActivity : Activity() {
         super.onResume()
         updateStatus()
         updateShizukuStatus()
+        updateUsageAccessStatus()
+    }
+
+    /** Usage access (for the launcher-aware clock): granted in Settings. */
+    private fun updateUsageAccessStatus() {
+        val granted = isUsageAccessGranted()
+        tvUsageAccessStatus.text = if (granted) {
+            "Acceso a uso: concedido — el reloj se oculta solo en el inicio"
+        } else {
+            "Acceso a uso: pendiente — sin él, el reloj se oculta en todas partes mientras el interruptor esté activo"
+        }
+        btnUsageAccess.isEnabled = !granted
+    }
+
+    private fun isUsageAccessGranted(): Boolean {
+        val appOps = getSystemService(APP_OPS_SERVICE) as? android.app.AppOpsManager
+            ?: return false
+        return appOps.checkOpNoThrow(
+            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(),
+            packageName
+        ) == android.app.AppOpsManager.MODE_ALLOWED
     }
 
     override fun onDestroy() {
