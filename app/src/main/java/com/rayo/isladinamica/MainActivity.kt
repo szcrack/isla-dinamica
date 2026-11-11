@@ -34,6 +34,9 @@ class MainActivity : Activity() {
     private lateinit var btnUsageAccess: Button
     private lateinit var swHideIcons: Switch
     private lateinit var swSwipeDismiss: Switch
+    private lateinit var swShowLockscreen: Switch
+    private lateinit var swNotchShape: Switch
+    private lateinit var swVisualizer: Switch
     private lateinit var rgTheme: RadioGroup
     private lateinit var sbOffsetX: SeekBar
     private lateinit var sbOffsetY: SeekBar
@@ -285,6 +288,34 @@ class MainActivity : Activity() {
             getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putBoolean(IslandService.KEY_SWIPE_DISMISS, isChecked)
+                .apply()
+        }
+
+        // ---- DynamicSpot: pantalla de bloqueo, forma de muesca y visualizador ----
+        swShowLockscreen = findViewById(R.id.swShowLockscreen)
+        swNotchShape = findViewById(R.id.swNotchShape)
+        swVisualizer = findViewById(R.id.swVisualizer)
+        swShowLockscreen.isChecked =
+            prefs.getBoolean(IslandService.KEY_SHOW_LOCKSCREEN, true)
+        swNotchShape.isChecked =
+            prefs.getBoolean(IslandService.KEY_NOTCH_SHAPE, true)
+        swVisualizer.isChecked =
+            prefs.getBoolean(IslandService.KEY_MUSIC_VISUALIZER, true)
+        val islandPrefs =
+            getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+        swShowLockscreen.setOnCheckedChangeListener { _, isChecked ->
+            islandPrefs.edit()
+                .putBoolean(IslandService.KEY_SHOW_LOCKSCREEN, isChecked)
+                .apply()
+        }
+        swNotchShape.setOnCheckedChangeListener { _, isChecked ->
+            islandPrefs.edit()
+                .putBoolean(IslandService.KEY_NOTCH_SHAPE, isChecked)
+                .apply()
+        }
+        swVisualizer.setOnCheckedChangeListener { _, isChecked ->
+            islandPrefs.edit()
+                .putBoolean(IslandService.KEY_MUSIC_VISUALIZER, isChecked)
                 .apply()
         }
 

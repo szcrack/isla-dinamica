@@ -75,6 +75,52 @@
                 android:scaleType="centerCrop"
                 android:visibility="gone" />
 
+            <!-- Animated music visualizer bars (DynamicSpot style). -->
+            <LinearLayout
+                android:id="@+id/visualizerRow"
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:layout_marginBottom="8dp"
+                android:gravity="bottom|center_horizontal"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <View
+                    android:id="@+id/visBar1"
+                    android:layout_width="4dp"
+                    android:layout_height="6dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="@drawable/vis_bar" />
+
+                <View
+                    android:id="@+id/visBar2"
+                    android:layout_width="4dp"
+                    android:layout_height="6dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="@drawable/vis_bar" />
+
+                <View
+                    android:id="@+id/visBar3"
+                    android:layout_width="4dp"
+                    android:layout_height="6dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="@drawable/vis_bar" />
+
+                <View
+                    android:id="@+id/visBar4"
+                    android:layout_width="4dp"
+                    android:layout_height="6dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="@drawable/vis_bar" />
+
+                <View
+                    android:id="@+id/visBar5"
+                    android:layout_width="4dp"
+                    android:layout_height="6dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="@drawable/vis_bar" />
+            </LinearLayout>
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

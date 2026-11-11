@@ -288,6 +288,30 @@
             android:checked="true"
             android:layout_marginBottom="8dp" />
 
+        <Switch
+            android:id="@+id/swShowLockscreen"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Mostrar la isla en la pantalla de bloqueo"
+            android:checked="true"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/swNotchShape"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Píldora con la forma exacta de la cámara"
+            android:checked="true"
+            android:layout_marginBottom="8dp" />
+
+        <Switch
+            android:id="@+id/swVisualizer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Visualizador de música animado"
+            android:checked="true"
+            android:layout_marginBottom="8dp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

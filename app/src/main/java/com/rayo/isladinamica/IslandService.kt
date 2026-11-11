@@ -4,6 +4,7 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.AppOpsManager
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,9 +13,11 @@ import android.app.RemoteInput
 import android.app.Service
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -81,8 +84,13 @@ class IslandService : Service() {
         const val KEY_LONG_PRESS_MS = "island_long_press_ms" // 300..1500 ms
         const val KEY_SWIPE_DISMISS = "island_swipe_dismiss" // true/false
 
-        /** Preview auto-collapse: the live preview closes itself. */
-        private const val PREVIEW_MS = 2000L
+        /** Show the island on the lock screen (DynamicSpot prefPopupLockscreen). */
+        const val KEY_SHOW_LOCKSCREEN = "island_show_lockscreen" // true/false
+        /** Collapsed pill follows the exact camera hole (DynamicSpot
+         * prefPopupShapeNotch). Off = standard rounded pill 64x48dp. */
+        const val KEY_NOTCH_SHAPE = "island_notch_shape" // true/false
+        /** Animated bars in the music card (DynamicSpot prefMusicVisualizer). */
+        const val KEY_MUSIC_VISUALIZER = "island_music_visualizer" // true/false
 
         /**
          * Shows the island so the user can see where it sits. Used while
@@ -93,7 +101,7 @@ class IslandService : Service() {
         fun previewPosition() {
             val service = instance ?: return
             if (!service.isExpanded) service.expand()
-            service.schedulePreviewCollapse()
+            service.scheduleAutoCollapse(3000) // restarts on every move
         }
     }
 
@@ -115,6 +123,10 @@ class IslandService : Service() {
     private var clockSection: View? = null
     private var albumArt: ImageView? = null
     private var musicBanner: ImageView? = null
+    private var visualizerRow: View? = null
+    private var visualizerBars: List<View> = emptyList()
+    private var visualizerPhase = 0f
+    private var keyguardManager: KeyguardManager? = null
     private var musicTitle: TextView? = null
     private var musicArtist: TextView? = null
     private var musicTime: TextView? = null
@@ -131,7 +143,6 @@ class IslandService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var collapseRunnable: Runnable? = null
-    private var previewCollapseRunnable: Runnable? = null
     private var sizeAnimator: ValueAnimator? = null
     private var isAnimating = false
     private var animGeneration = 0
@@ -176,12 +187,72 @@ class IslandService : Service() {
         }
     }
 
+    // ---- Lock screen (DynamicSpot prefPopupLockscreen, v1.10) ----
+    // Hides the island while the keyguard is locked when the user turned
+    // the lock-screen switch off. Event-driven: lock/unlock broadcasts.
+    private val lockscreenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            updateLockscreenVisibility()
+        }
+    }
+
+    private fun updateLockscreenVisibility() {
+        val show = prefs().getBoolean(KEY_SHOW_LOCKSCREEN, true)
+        val locked = keyguardManager?.isKeyguardLocked == true
+        pillView?.visibility = if (!show && locked) View.GONE else View.VISIBLE
+    }
+
+    // ---- Music visualizer (DynamicSpot prefMusicVisualizer, v1.10) ----
+    // Five bars that pulse while music plays. This is a decorative
+    // animation driven by the playback state — a real audio-session
+    // visualizer needs CAPTURE_AUDIO_OUTPUT, which third-party apps
+    // cannot get, so the bars follow the beat of the state, not the
+    // waveform.
+    private val visualizerRunnable = object : Runnable {
+        override fun run() {
+            if (!isExpanded || !isPlaying ||
+                !prefs().getBoolean(KEY_MUSIC_VISUALIZER, true)) return
+            visualizerPhase += 0.55f
+            visualizerBars.forEachIndexed { i, bar ->
+                val h = (6 + 22 * kotlin.math.abs(
+                    kotlin.math.sin(visualizerPhase + i * 0.9f)
+                )).toInt()
+                val lp = bar.layoutParams
+                if (lp.height != dp(h.toFloat())) {
+                    lp.height = dp(h.toFloat())
+                    bar.layoutParams = lp
+                }
+            }
+            handler.postDelayed(this, 110)
+        }
+    }
+
+    private fun updateVisualizerUi() {
+        val enabled = prefs().getBoolean(KEY_MUSIC_VISUALIZER, true)
+        val show = enabled && mediaController != null && isExpanded
+        visualizerRow?.visibility = if (show) View.VISIBLE else View.GONE
+        handler.removeCallbacks(visualizerRunnable)
+        if (show && isPlaying) handler.post(visualizerRunnable)
+        if (!isPlaying) {
+            visualizerBars.forEach { bar ->
+                val lp = bar.layoutParams
+                if (lp.height != dp(6f)) {
+                    lp.height = dp(6f)
+                    bar.layoutParams = lp
+                }
+            }
+        }
+    }
+
     private val prefsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
                 IslandTheme.KEY_THEME -> applyTheme()
-                KEY_OFFSET_X, KEY_OFFSET_Y, KEY_SIZE_W, KEY_SIZE_H -> repositionPill()
+                KEY_OFFSET_X, KEY_OFFSET_Y, KEY_SIZE_W, KEY_SIZE_H,
+                KEY_NOTCH_SHAPE -> repositionPill()
                 KEY_POPUP_W -> if (isExpanded) repositionPill()
+                KEY_SHOW_LOCKSCREEN -> updateLockscreenVisibility()
+                KEY_MUSIC_VISUALIZER -> updateVisualizerUi()
                 ShizukuHelper.KEY_HIDE_ICONS -> {
                     // The hide toggle changed: (re)start or stop the
                     // launcher-aware clock polling and apply it at once.
@@ -246,6 +317,17 @@ class IslandService : Service() {
             getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
         launcherPackage = resolveLauncherPackage()
         if (hideIconsEnabled()) startClockPolling()
+        keyguardManager =
+            getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        registerReceiver(
+            lockscreenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+        )
+        updateLockscreenVisibility()
         IslandBridge.onNotification = { notif -> showNotification(notif) }
         IslandBridge.onNotificationRemoved = { key -> onNotifRemoved(key) }
     }
@@ -258,6 +340,11 @@ class IslandService : Service() {
         isRunning = false
         instance = null
         stopClockPolling()
+        try {
+            unregisterReceiver(lockscreenReceiver)
+        } catch (e: Exception) {
+            // Never registered.
+        }
         IslandBridge.onNotification = null
         IslandBridge.onNotificationRemoved = null
         getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
@@ -367,6 +454,14 @@ class IslandService : Service() {
         clockSection = view.findViewById(R.id.clockSection)
         albumArt = view.findViewById(R.id.albumArt)
         musicBanner = view.findViewById(R.id.musicBanner)
+        visualizerRow = view.findViewById(R.id.visualizerRow)
+        visualizerBars = listOf(
+            view.findViewById(R.id.visBar1),
+            view.findViewById(R.id.visBar2),
+            view.findViewById(R.id.visBar3),
+            view.findViewById(R.id.visBar4),
+            view.findViewById(R.id.visBar5)
+        )
         musicTitle = view.findViewById(R.id.musicTitle)
         musicArtist = view.findViewById(R.id.musicArtist)
         musicTime = view.findViewById(R.id.musicTime)
@@ -565,6 +660,7 @@ class IslandService : Service() {
         // (Claude review, v1.8.)
         cutoutRect()?.let { rect ->
             exactCutoutSize = rect.width() to rect.height()
+            if (!prefs().getBoolean(KEY_NOTCH_SHAPE, true)) return@let
             val lp = collapsedView?.layoutParams
             if (lp != null) {
                 lp.width = rect.width()
@@ -607,6 +703,9 @@ class IslandService : Service() {
         windowManager.addView(view, params)
         applyTheme()
         updateCollapsedUi()
+        // Sync the collapsed pill size with the current mode (exact hole
+        // vs standard pill) and position it on the camera.
+        repositionPill()
     }
 
     // ---- Camera-centered positioning ----
@@ -626,10 +725,19 @@ class IslandService : Service() {
         }
     }
 
+    /** True when the collapsed pill follows the exact camera hole
+     * (notch shape on AND a cutout is known). Off = standard pill. */
+    private fun isExactMode(): Boolean =
+        prefs().getBoolean(KEY_NOTCH_SHAPE, true) && exactCutoutSize != null
+
     /** Collapsed pill size in px: exactly the camera hole when known,
      * scaled by the user's size sliders (DynamicSpot seekGlowSizeX/Y). */
     private fun collapsedSizePx(): Pair<Int, Int> {
-        val base = exactCutoutSize ?: (dp(COLLAPSED_W_DP) to dp(COLLAPSED_H_DP))
+        val base = if (isExactMode()) {
+            exactCutoutSize
+        } else {
+            null
+        } ?: (dp(COLLAPSED_W_DP) to dp(COLLAPSED_H_DP))
         val wPct = prefs().getInt(KEY_SIZE_W, 100).coerceIn(50, 150)
         val hPct = prefs().getInt(KEY_SIZE_H, 100).coerceIn(50, 150)
         return (base.first * wPct / 100) to (base.second * hPct / 100)
@@ -900,10 +1008,6 @@ class IslandService : Service() {
         if (isExpanded && !isAnimating &&
             expandedView?.visibility == View.VISIBLE) return
         isExpanded = true
-        // A real expand (tap / notification) cancels any pending preview
-        // auto-collapse: the user is interacting with the island now.
-        previewCollapseRunnable?.let { handler.removeCallbacks(it) }
-        previewCollapseRunnable = null
         // Re-apply the live position: if a slider change was missed while
         // the island was idle, the position is corrected on next use.
         repositionPill()
@@ -917,8 +1021,6 @@ class IslandService : Service() {
     private fun collapse() {
         val wasShowingNotif = showingNotification
         isExpanded = false
-        previewCollapseRunnable?.let { handler.removeCallbacks(it) }
-        previewCollapseRunnable = null
         stopProgressPolling()
         stopClockTicker()
         showingNotification = false
@@ -949,20 +1051,6 @@ class IslandService : Service() {
     }
 
     private fun isReplyFocused() = replyInput?.hasFocus() == true
-
-    /** The live preview closes itself shortly after (v1.7): without this,
-     * moving a slider left the island expanded forever ("queda alargada"). */
-    private fun schedulePreviewCollapse() {
-        previewCollapseRunnable?.let { handler.removeCallbacks(it) }
-        val r = Runnable {
-            if (isExpanded) {
-                Log.d("IslaDinamica", "preview timeout -> collapse")
-                collapse()
-            }
-        }
-        previewCollapseRunnable = r
-        handler.postDelayed(r, PREVIEW_MS)
-    }
 
     // ---- Smooth expand / collapse animation ----
 
@@ -1068,8 +1156,9 @@ class IslandService : Service() {
             // The collapsed pill is only ~27dp wide (the camera hole) — too
             // narrow to tap reliably. Transparent side padding makes the
             // touch target ~51dp wide while the visible pill stays exact.
+            // In standard (non-notch) mode the XML 6dp padding stays.
             // (Claude review, v1.8.)
-            val side = dp(12f)
+            val side = if (isExactMode()) dp(12f) else dp(6f)
             pillView?.setPadding(side, 0, side, 0)
         }
         val root = pillView ?: return
@@ -1361,12 +1450,13 @@ class IslandService : Service() {
         seekBar?.visibility = if (showProgress) View.VISIBLE else View.GONE
         musicTime?.visibility = if (showProgress) View.VISIBLE else View.GONE
         if (showProgress) updateProgress()
+        updateVisualizerUi()
     }
 
     private fun updateCollapsedUi() {
         // At exact camera-hole size there is no room for the mini icon or
         // the dot — the pill is just the ring around the camera.
-        if (exactCutoutSize != null) {
+        if (isExactMode()) {
             collapsedIcon?.visibility = View.GONE
             collapsedDot?.visibility = View.GONE
             return
