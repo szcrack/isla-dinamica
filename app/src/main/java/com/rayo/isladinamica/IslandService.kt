@@ -45,6 +45,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.SeekBar
+import android.widget.Toast
 import android.widget.TextView
 import java.util.ArrayDeque
 
@@ -132,6 +133,7 @@ class IslandService : Service() {
     private var previewCollapseRunnable: Runnable? = null
     private var sizeAnimator: ValueAnimator? = null
     private var isAnimating = false
+    private var animGeneration = 0
 
     // ---- Raw gesture tracking on the island root (v1.7) ----
     // The tap bug: taps on the pill sometimes never reached toggleExpand().
@@ -492,8 +494,12 @@ class IslandService : Service() {
         // the app), which would otherwise swallow the tap before it reaches
         // the root.
         clockSection?.setOnClickListener { toggleExpand() }
-        notifSection?.setOnClickListener { openCurrentNotif() }
-        musicSection?.setOnClickListener { openPlayerApp() }
+        // Tap on a content section opens its app. If there is nothing to
+        // open (no notification, no player), the tap collapses the island
+        // instead of doing nothing — a tap must never have no exit.
+        // (Claude review, v1.8.)
+        notifSection?.setOnClickListener { if (!openCurrentNotif()) collapse() }
+        musicSection?.setOnClickListener { if (!openPlayerApp()) collapse() }
         btnPlayPause?.setOnClickListener {
             val c = mediaController ?: return@setOnClickListener
             if (isPlaying) c.transportControls.pause() else c.transportControls.play()
@@ -551,8 +557,11 @@ class IslandService : Service() {
 
         // The collapsed pill is exactly the camera hole: its size comes from
         // the display cutout bounding rect (in pixels, no dp conversion, so
-        // it stays exact at any density). The root padding is dropped so the
-        // window is exactly the rect — no extra margin around the hole.
+        // it stays exact at any density). The visible pill has no margin,
+        // but the root gets transparent side padding so the touch target is
+        // ~51dp wide instead of the 27dp hole (a finger misses 27dp easily
+        // — that alone can look like "the tap does nothing").
+        // (Claude review, v1.8.)
         cutoutRect()?.let { rect ->
             exactCutoutSize = rect.width() to rect.height()
             val lp = collapsedView?.layoutParams
@@ -561,7 +570,8 @@ class IslandService : Service() {
                 lp.height = rect.height()
                 collapsedView?.layoutParams = lp
             }
-            view.setPadding(0, 0, 0, 0)
+            val side = dp(12f)
+            view.setPadding(side, 0, side, 0)
         }
 
         val params = WindowManager.LayoutParams(
@@ -570,7 +580,10 @@ class IslandService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                // Lets the window sit at negative Y (above the top edge)
+                // without the window manager clamping it back inside.
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -867,11 +880,24 @@ class IslandService : Service() {
     }
 
     private fun toggleExpand() {
-        if (isExpanded) collapse() else expand()
+        // Decide by what is visible, not only by the flag: if the flag and
+        // the visible state ever diverge (a cancelled animation), the tap
+        // still does the right thing. (Claude review, v1.8.)
+        val visiblyExpanded = expandedView?.visibility == View.VISIBLE
+        Log.d("IslaDinamica", "toggleExpand: isExpanded=$isExpanded visible=$visiblyExpanded")
+        // Temporary diagnostic toast: proves the tap reaches the island.
+        // Removed once the tap is confirmed working on the phone.
+        Toast.makeText(
+            this,
+            if (isExpanded || visiblyExpanded) "Isla: cerrar" else "Isla: abrir",
+            Toast.LENGTH_SHORT
+        ).show()
+        if (isExpanded || visiblyExpanded) collapse() else expand()
     }
 
     private fun expand() {
-        if (isExpanded && !isAnimating) return
+        if (isExpanded && !isAnimating &&
+            expandedView?.visibility == View.VISIBLE) return
         isExpanded = true
         // A real expand (tap / notification) cancels any pending preview
         // auto-collapse: the user is interacting with the island now.
@@ -973,6 +999,7 @@ class IslandService : Service() {
             collapsedView?.alpha = 0f
         }
         isAnimating = true
+        val gen = ++animGeneration
         val anim = ValueAnimator.ofFloat(0f, 1f)
         anim.duration = ANIM_MS
         anim.interpolator = AccelerateDecelerateInterpolator()
@@ -995,15 +1022,22 @@ class IslandService : Service() {
         }
         anim.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
+                // Only the newest animation may apply its final state:
+                // a cancelled animator's onAnimationEnd also fires, and
+                // without this guard it would apply the OLD target after a
+                // newer animation already started (flag/visible divergence).
+                if (gen != animGeneration) return
                 isAnimating = false
                 sizeAnimator = null
                 finishSwitch(toExpanded)
             }
 
             override fun onAnimationCancel(animation: Animator) {
+                // ValueAnimator calls onAnimationEnd right after
+                // onAnimationCancel, so finishSwitch lives only there
+                // (guarded above). Just clear the animating flag.
+                if (gen != animGeneration) return
                 isAnimating = false
-                sizeAnimator = null
-                finishSwitch(toExpanded)
             }
         })
         sizeAnimator = anim
@@ -1017,11 +1051,19 @@ class IslandService : Service() {
             expandedView?.alpha = 1f
             collapsedView?.visibility = View.GONE
             pillView?.setBackgroundResource(currentTheme.cardBackgroundRes)
+            // No side padding while expanded: the card uses the full width.
+            pillView?.setPadding(0, 0, 0, 0)
         } else {
             expandedView?.visibility = View.GONE
             collapsedView?.visibility = View.VISIBLE
             collapsedView?.alpha = 1f
             pillView?.setBackgroundResource(currentTheme.pillBackgroundRes)
+            // The collapsed pill is only ~27dp wide (the camera hole) — too
+            // narrow to tap reliably. Transparent side padding makes the
+            // touch target ~51dp wide while the visible pill stays exact.
+            // (Claude review, v1.8.)
+            val side = dp(12f)
+            pillView?.setPadding(side, 0, side, 0)
         }
         val root = pillView ?: return
         val params = root.layoutParams as? WindowManager.LayoutParams ?: return
@@ -1078,10 +1120,11 @@ class IslandService : Service() {
     }
 
     /** Tap on the notification card: open the app, then show the next queued one. */
-    private fun openCurrentNotif() {
-        val notif = currentNotif
+    /** Tap on the notification card: open it. Returns false when there is
+     * nothing to open (the caller then collapses instead). */
+    private fun openCurrentNotif(): Boolean {
+        val notif = currentNotif ?: return false
         collapse()
-        if (notif == null) return
         try {
             notif.contentIntent?.send()
         } catch (e: PendingIntent.CanceledException) {
@@ -1089,13 +1132,16 @@ class IslandService : Service() {
         } catch (e: Exception) {
             openPackage(notif.packageName)
         }
+        return true
     }
 
-    /** Tap on the music card: open the player app. */
-    private fun openPlayerApp() {
-        val pkg = mediaController?.packageName ?: return
+    /** Tap on the music card: open the player app. Returns false when there
+     * is no active player (the caller then collapses instead). */
+    private fun openPlayerApp(): Boolean {
+        val pkg = mediaController?.packageName ?: return false
         collapse()
         openPackage(pkg)
+        return true
     }
 
     /** Long-press on the expanded island: open the app being shown. */
@@ -1111,12 +1157,20 @@ class IslandService : Service() {
 
     /** The overlay window is NOT_FOCUSABLE by default (so touches pass to
      * other apps). The keyboard only shows when the window is focusable,
-     * so the reply input toggles that flag on demand. */
+     * so the reply input toggles that flag on demand. While focusable the
+     * window also gets FLAG_NOT_TOUCH_MODAL, otherwise it becomes
+     * touch-modal and swallows touches outside its bounds.
+     * (Claude review, v1.8.) */
     private fun setWindowFocusable(focusable: Boolean) {
         val root = pillView ?: return
         val params = root.layoutParams as? WindowManager.LayoutParams ?: return
-        val flag = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        val newFlags = if (focusable) params.flags and flag.inv() else params.flags or flag
+        val notFocusable = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        val notTouchModal = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        val newFlags = if (focusable) {
+            (params.flags and notFocusable.inv()) or notTouchModal
+        } else {
+            (params.flags or notFocusable) and notTouchModal.inv()
+        }
         if (newFlags == params.flags) return
         params.flags = newFlags
         try {
