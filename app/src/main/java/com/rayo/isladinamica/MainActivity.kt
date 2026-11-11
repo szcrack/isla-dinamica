@@ -33,11 +33,22 @@ class MainActivity : Activity() {
     private lateinit var btnShizukuApply: Button
     private lateinit var btnUsageAccess: Button
     private lateinit var swHideIcons: Switch
+    private lateinit var swSwipeDismiss: Switch
     private lateinit var rgTheme: RadioGroup
     private lateinit var sbOffsetX: SeekBar
     private lateinit var sbOffsetY: SeekBar
     private lateinit var tvOffsetX: TextView
     private lateinit var tvOffsetY: TextView
+    private lateinit var sbSizeW: SeekBar
+    private lateinit var sbSizeH: SeekBar
+    private lateinit var tvSizeW: TextView
+    private lateinit var tvSizeH: TextView
+    private lateinit var sbPopupW: SeekBar
+    private lateinit var tvPopupW: TextView
+    private lateinit var sbAutoClose: SeekBar
+    private lateinit var tvAutoClose: TextView
+    private lateinit var sbLongPress: SeekBar
+    private lateinit var tvLongPress: TextView
 
     private var syncingSwitch = false
     private var grantsAutoApplied = false
@@ -194,6 +205,86 @@ class MainActivity : Activity() {
             IslandService.previewPosition()
         }
 
+        // ---- Tamaño y comportamiento (ajustes de DynamicSpot) ----
+        sbSizeW = findViewById(R.id.sbSizeW)
+        sbSizeH = findViewById(R.id.sbSizeH)
+        tvSizeW = findViewById(R.id.tvSizeW)
+        tvSizeH = findViewById(R.id.tvSizeH)
+        sbPopupW = findViewById(R.id.sbPopupW)
+        tvPopupW = findViewById(R.id.tvPopupW)
+        sbAutoClose = findViewById(R.id.sbAutoClose)
+        tvAutoClose = findViewById(R.id.tvAutoClose)
+        sbLongPress = findViewById(R.id.sbLongPress)
+        tvLongPress = findViewById(R.id.tvLongPress)
+        swSwipeDismiss = findViewById(R.id.swSwipeDismiss)
+        // SeekBar progress is offset from the minimum of each range.
+        sbSizeW.progress =
+            prefs.getInt(IslandService.KEY_SIZE_W, 100) - 50
+        sbSizeH.progress =
+            prefs.getInt(IslandService.KEY_SIZE_H, 100) - 50
+        sbPopupW.progress =
+            prefs.getInt(IslandService.KEY_POPUP_W, 352) - 280
+        sbAutoClose.progress =
+            prefs.getInt(IslandService.KEY_AUTO_CLOSE_S, 4) - 2
+        sbLongPress.progress =
+            (prefs.getInt(IslandService.KEY_LONG_PRESS_MS, 500) - 300) / 100
+        swSwipeDismiss.isChecked =
+            prefs.getBoolean(IslandService.KEY_SWIPE_DISMISS, true)
+        updateBehaviorLabels()
+        val behaviorListener = object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(
+                seekBar: SeekBar?,
+                progress: Int,
+                fromUser: Boolean
+            ) {
+                if (!fromUser) return
+                val editor = getSharedPreferences(
+                    IslandTheme.PREFS_NAME, MODE_PRIVATE
+                ).edit()
+                var preview = false
+                when (seekBar?.id) {
+                    R.id.sbSizeW -> {
+                        editor.putInt(IslandService.KEY_SIZE_W, progress + 50)
+                        preview = true
+                    }
+                    R.id.sbSizeH -> {
+                        editor.putInt(IslandService.KEY_SIZE_H, progress + 50)
+                        preview = true
+                    }
+                    R.id.sbPopupW -> {
+                        editor.putInt(IslandService.KEY_POPUP_W, progress + 280)
+                        preview = true
+                    }
+                    R.id.sbAutoClose -> {
+                        editor.putInt(IslandService.KEY_AUTO_CLOSE_S, progress + 2)
+                    }
+                    R.id.sbLongPress -> {
+                        editor.putInt(
+                            IslandService.KEY_LONG_PRESS_MS, progress * 100 + 300
+                        )
+                    }
+                }
+                editor.apply()
+                updateBehaviorLabels()
+                if (preview) IslandService.previewPosition()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        }
+        sbSizeW.setOnSeekBarChangeListener(behaviorListener)
+        sbSizeH.setOnSeekBarChangeListener(behaviorListener)
+        sbPopupW.setOnSeekBarChangeListener(behaviorListener)
+        sbAutoClose.setOnSeekBarChangeListener(behaviorListener)
+        sbLongPress.setOnSeekBarChangeListener(behaviorListener)
+        swSwipeDismiss.setOnCheckedChangeListener { _, isChecked ->
+            if (syncingSwitch) return@setOnCheckedChangeListener
+            getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putBoolean(IslandService.KEY_SWIPE_DISMISS, isChecked)
+                .apply()
+        }
+
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionListener)
@@ -283,6 +374,15 @@ class MainActivity : Activity() {
         val y = sbOffsetY.progress - IslandService.OFFSET_RANGE_DP
         tvOffsetX.text = "Posición horizontal: ${if (x >= 0) "+$x" else "$x"} dp"
         tvOffsetY.text = "Posición vertical: ${if (y >= 0) "+$y" else "$y"} dp"
+    }
+
+    private fun updateBehaviorLabels() {
+        tvSizeW.text = "Ancho de la isla: ${sbSizeW.progress + 50}%"
+        tvSizeH.text = "Alto de la isla: ${sbSizeH.progress + 50}%"
+        tvPopupW.text = "Ancho de la tarjeta expandida: ${sbPopupW.progress + 280} dp"
+        tvAutoClose.text = "Cerrar sola a los: ${sbAutoClose.progress + 2} s"
+        tvLongPress.text =
+            "Toque largo para abrir la app: ${sbLongPress.progress * 100 + 300} ms"
     }
 
     // ---- Shizuku UI ----

@@ -193,6 +193,104 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:text="Tamaño y comportamiento"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ajustes traídos de DynamicSpot. El tamaño es un porcentaje del agujero de la cámara (100% = exacto)."
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvSizeW"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ancho de la isla: 100%"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbSizeW"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvSizeH"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Alto de la isla: 100%"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbSizeH"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvPopupW"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ancho de la tarjeta expandida: 352 dp"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbPopupW"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="140"
+            android:progress="72"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvAutoClose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Cerrar sola a los: 4 s"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbAutoClose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="28"
+            android:progress="2"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvLongPress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Toque largo para abrir la app: 500 ms"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbLongPress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="12"
+            android:progress="2"
+            android:layout_marginBottom="12dp" />
+
+        <Switch
+            android:id="@+id/swSwipeDismiss"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Deslizar a los lados para cerrar la isla"
+            android:checked="true"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Tema de la isla"
             android:textSize="16sp"
             android:textStyle="bold"

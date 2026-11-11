@@ -29,7 +29,9 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -53,15 +55,12 @@ class IslandService : Service() {
         private var instance: IslandService? = null
         private const val CHANNEL_ID = "isla_dinamica"
         private const val NOTIF_ID = 1
-        private const val AUTO_COLLAPSE_MS = 4000L
         private const val PROGRESS_POLL_MS = 500L
         private const val ANIM_MS = 300L
         private const val MAX_QUEUE = 5
         private const val CLOCK_POLL_MS = 2000L
         private const val COLLAPSED_W_DP = 64f
         private const val COLLAPSED_H_DP = 48f
-        private const val EXPANDED_W_DP = 352f
-        private const val EXPANDED_CONTENT_DP = 340f
 
         /** Manual island position offsets (dp, -40..+40), set in MainActivity. */
         const val KEY_OFFSET_X = "island_offset_x_dp"
@@ -69,14 +68,30 @@ class IslandService : Service() {
         const val OFFSET_RANGE_DP = 40
 
         /**
+         * Settings migrated from DynamicSpot (its keys: seekGlowSizeX/Y,
+         * seekPopupWidth, seekPopupTimeoutNew, seekLongPressTime,
+         * prefPopupSwipeLeft/Right). All set in MainActivity.
+         */
+        const val KEY_SIZE_W = "island_size_w_pct"      // 50..150 (% of camera hole)
+        const val KEY_SIZE_H = "island_size_h_pct"      // 50..150
+        const val KEY_POPUP_W = "island_popup_w_dp"     // 280..420 dp
+        const val KEY_AUTO_CLOSE_S = "island_auto_close_s" // 2..30 s
+        const val KEY_LONG_PRESS_MS = "island_long_press_ms" // 300..1500 ms
+        const val KEY_SWIPE_DISMISS = "island_swipe_dismiss" // true/false
+
+        /** Preview auto-collapse: the live preview closes itself. */
+        private const val PREVIEW_MS = 2000L
+
+        /**
          * Shows the island so the user can see where it sits. Used while
-         * adjusting the position sliders in MainActivity: the collapsed pill
-         * is the size of the camera hole and hard to see, so the island is
-         * expanded as a live preview of the new position.
+         * adjusting the position/size sliders in MainActivity: the collapsed
+         * pill is the size of the camera hole and hard to see, so the island
+         * is expanded as a live preview of the new position.
          */
         fun previewPosition() {
             val service = instance ?: return
             if (!service.isExpanded) service.expand()
+            service.schedulePreviewCollapse()
         }
     }
 
@@ -97,6 +112,7 @@ class IslandService : Service() {
     private var btnSendReply: ImageButton? = null
     private var clockSection: View? = null
     private var albumArt: ImageView? = null
+    private var musicBanner: ImageView? = null
     private var musicTitle: TextView? = null
     private var musicArtist: TextView? = null
     private var musicTime: TextView? = null
@@ -113,8 +129,26 @@ class IslandService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var collapseRunnable: Runnable? = null
+    private var previewCollapseRunnable: Runnable? = null
     private var sizeAnimator: ValueAnimator? = null
     private var isAnimating = false
+
+    // ---- Raw gesture tracking on the island root (v1.7) ----
+    // The tap bug: taps on the pill sometimes never reached toggleExpand().
+    // The root used OnClickListener, which only fires when no child consumes
+    // the touch AND the view's own click handling runs — long-clickable
+    // children and focus changes can swallow it silently. So the root now
+    // tracks the gesture itself (DOWN/MOVE/UP) and decides: tap, long-press
+    // or horizontal swipe. Taps on clickable children (clock/notif/music
+    // sections, buttons, seek bar) never reach this listener — they keep
+    // their own behavior. Every detected gesture is logged so a future
+    // `adb logcat -s IslaDinamica` shows whether taps arrive at all.
+    private var gestureDownTime = 0L
+    private var gestureDownX = 0f
+    private var gestureDownY = 0f
+    private var gestureMaxMove = 0f
+    private var gestureLongPressed = false
+    private var gestureLongPressRunnable: Runnable? = null
 
     private var mediaSessionManager: MediaSessionManager? = null
     private var mediaController: MediaController? = null
@@ -143,7 +177,8 @@ class IslandService : Service() {
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
                 IslandTheme.KEY_THEME -> applyTheme()
-                KEY_OFFSET_X, KEY_OFFSET_Y -> repositionPill()
+                KEY_OFFSET_X, KEY_OFFSET_Y, KEY_SIZE_W, KEY_SIZE_H -> repositionPill()
+                KEY_POPUP_W -> if (isExpanded) repositionPill()
                 ShizukuHelper.KEY_HIDE_ICONS -> {
                     // The hide toggle changed: (re)start or stop the
                     // launcher-aware clock polling and apply it at once.
@@ -328,6 +363,7 @@ class IslandService : Service() {
         btnSendReply = view.findViewById(R.id.btnSendReply)
         clockSection = view.findViewById(R.id.clockSection)
         albumArt = view.findViewById(R.id.albumArt)
+        musicBanner = view.findViewById(R.id.musicBanner)
         musicTitle = view.findViewById(R.id.musicTitle)
         musicArtist = view.findViewById(R.id.musicArtist)
         musicTime = view.findViewById(R.id.musicTime)
@@ -361,26 +397,101 @@ class IslandService : Service() {
         clockTime = view.findViewById(R.id.tvIslandTime)
         clockDate = view.findViewById(R.id.tvIslandDate)
 
-        // Tap on empty pill area toggles expand/collapse. Taps on the two
-        // content sections are consumed by their own listeners below, so
-        // they open the app instead of toggling. The clock area at the top
-        // (right under the camera) also toggles: it is the "notch" the user
-        // taps to minimize the island. It needs its own listener because it
-        // is long-clickable (long-press opens the app), which would otherwise
-        // swallow the tap before it reaches the root.
-        view.setOnClickListener { toggleExpand() }
-        clockSection?.setOnClickListener { toggleExpand() }
-        // Tap outside the island closes the expanded card. The window gets
-        // FLAG_WATCH_OUTSIDE_TOUCH below, so touches outside its bounds
-        // arrive here as ACTION_OUTSIDE (and still reach the app underneath).
+        // Tap / swipe / long-press on the island, detected raw (v1.7).
+        // The old OnClickListener on the root sometimes never fired: a tap
+        // only becomes a "click" when no child consumes the touch and the
+        // view's own click handling runs, and long-clickable children plus
+        // focus changes could swallow it silently — the island stayed
+        // "alargada" and pressing it did nothing. So the root tracks the
+        // gesture itself (DOWN/MOVE/UP). Taps on clickable children
+        // (clock/notif/music sections, buttons, seek bar) never reach this
+        // listener; they keep their own behavior, including the clock area
+        // toggling the island. Every gesture is logged so a future
+        // `adb logcat -s IslaDinamica` shows whether taps arrive at all.
         view.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE && isExpanded) {
-                collapse()
-                true
-            } else {
-                false
+            when (event.action) {
+                MotionEvent.ACTION_OUTSIDE -> {
+                    // Tap outside the island closes the expanded card. The
+                    // window gets FLAG_WATCH_OUTSIDE_TOUCH below, so touches
+                    // outside its bounds arrive here as ACTION_OUTSIDE (and
+                    // still reach the app underneath).
+                    if (isExpanded) {
+                        Log.d("IslaDinamica", "tap outside -> collapse")
+                        collapse()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                MotionEvent.ACTION_DOWN -> {
+                    gestureDownTime = SystemClock.uptimeMillis()
+                    gestureDownX = event.x
+                    gestureDownY = event.y
+                    gestureMaxMove = 0f
+                    gestureLongPressed = false
+                    val longPressMs = prefs().getInt(KEY_LONG_PRESS_MS, 500)
+                    val r = Runnable {
+                        if (!gestureLongPressed && isExpanded) {
+                            gestureLongPressed = true
+                            Log.d("IslaDinamica", "long-press -> open app")
+                            openCurrentApp()
+                        }
+                    }
+                    gestureLongPressRunnable = r
+                    handler.postDelayed(r, longPressMs.toLong())
+                    // Take the gesture so MOVE/UP keep arriving here.
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.x - gestureDownX
+                    val dy = event.y - gestureDownY
+                    gestureMaxMove = maxOf(
+                        gestureMaxMove,
+                        kotlin.math.abs(dx),
+                        kotlin.math.abs(dy)
+                    )
+                    if (gestureMaxMove > dp(12f)) {
+                        gestureLongPressRunnable?.let { handler.removeCallbacks(it) }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    gestureLongPressRunnable?.let { handler.removeCallbacks(it) }
+                    val dt = SystemClock.uptimeMillis() - gestureDownTime
+                    val dx = event.x - gestureDownX
+                    val dy = event.y - gestureDownY
+                    val tapSlop = dp(12f)
+                    if (!gestureLongPressed && dt < 350 && gestureMaxMove < tapSlop) {
+                        Log.d("IslaDinamica", "tap -> toggleExpand (expanded=$isExpanded)")
+                        toggleExpand()
+                        true
+                    } else if (!gestureLongPressed &&
+                        prefs().getBoolean(KEY_SWIPE_DISMISS, true) &&
+                        kotlin.math.abs(dx) > dp(60f) &&
+                        kotlin.math.abs(dx) > kotlin.math.abs(dy) * 2
+                    ) {
+                        // Horizontal swipe dismisses the expanded island
+                        // (DynamicSpot: prefPopupSwipeLeft/Right).
+                        Log.d("IslaDinamica", "swipe -> collapse")
+                        if (isExpanded) collapse()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    gestureLongPressRunnable?.let { handler.removeCallbacks(it) }
+                    false
+                }
+                else -> false
             }
         }
+        // The clock area at the top (right under the camera) also toggles:
+        // it is the "notch" the user taps to minimize the island. It needs
+        // its own listener because it is long-clickable (long-press opens
+        // the app), which would otherwise swallow the tap before it reaches
+        // the root.
+        clockSection?.setOnClickListener { toggleExpand() }
         notifSection?.setOnClickListener { openCurrentNotif() }
         musicSection?.setOnClickListener { openPlayerApp() }
         btnPlayPause?.setOnClickListener {
@@ -390,10 +501,12 @@ class IslandService : Service() {
         btnPrev?.setOnClickListener { mediaController?.transportControls?.skipToPrevious() }
         btnNext?.setOnClickListener { mediaController?.transportControls?.skipToNext() }
 
-        // Long-press on the expanded island opens the app (the notification's
-        // app, or the music player). Attached to the card itself and to both
-        // content sections, so it works anywhere on the card except on the
-        // transport buttons and the seek bar (they keep their own touch).
+        // Long-press on the content sections opens the app (the
+        // notification's app, or the music player). Attached to both content
+        // sections and to the clock area, so it works anywhere on the card
+        // except on the transport buttons and the seek bar (they keep their
+        // own touch). Long-press on empty card area is handled by the raw
+        // gesture detector on the root above.
         val openAppLongClick = View.OnLongClickListener {
             if (isExpanded) {
                 openCurrentApp()
@@ -402,7 +515,6 @@ class IslandService : Service() {
                 false
             }
         }
-        view.setOnLongClickListener(openAppLongClick)
         notifSection?.setOnLongClickListener(openAppLongClick)
         musicSection?.setOnLongClickListener(openAppLongClick)
         clockSection?.setOnLongClickListener(openAppLongClick)
@@ -500,10 +612,21 @@ class IslandService : Service() {
         }
     }
 
-    /** Collapsed pill size in px: exactly the camera hole when known. */
+    /** Collapsed pill size in px: exactly the camera hole when known,
+     * scaled by the user's size sliders (DynamicSpot seekGlowSizeX/Y). */
     private fun collapsedSizePx(): Pair<Int, Int> {
-        return exactCutoutSize ?: (dp(COLLAPSED_W_DP) to dp(COLLAPSED_H_DP))
+        val base = exactCutoutSize ?: (dp(COLLAPSED_W_DP) to dp(COLLAPSED_H_DP))
+        val wPct = prefs().getInt(KEY_SIZE_W, 100).coerceIn(50, 150)
+        val hPct = prefs().getInt(KEY_SIZE_H, 100).coerceIn(50, 150)
+        return (base.first * wPct / 100) to (base.second * hPct / 100)
     }
+
+    private fun popupWidthPx(): Int {
+        return dp(prefs().getInt(KEY_POPUP_W, 352).coerceIn(280, 420).toFloat())
+    }
+
+    private fun prefs(): SharedPreferences =
+        getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
 
     /** Center of the camera cutout in screen pixels, or null when unknown. */
     private fun cutoutCenter(): Pair<Int, Int>? {
@@ -541,6 +664,17 @@ class IslandService : Service() {
     /** Moves the live pill window to the current computed position. */
     private fun repositionPill() {
         val root = pillView ?: return
+        // Size changes (sliders) also land here: resize the collapsed pill
+        // to the scaled cutout size before repositioning it.
+        collapsedView?.let {
+            val (w, h) = collapsedSizePx()
+            val lp = it.layoutParams
+            if (lp != null && (lp.width != w || lp.height != h)) {
+                lp.width = w
+                lp.height = h
+                it.layoutParams = lp
+            }
+        }
         val params = root.layoutParams as? WindowManager.LayoutParams ?: return
         val (x, y) = computePillPosition()
         params.x = x
@@ -739,6 +873,10 @@ class IslandService : Service() {
     private fun expand() {
         if (isExpanded && !isAnimating) return
         isExpanded = true
+        // A real expand (tap / notification) cancels any pending preview
+        // auto-collapse: the user is interacting with the island now.
+        previewCollapseRunnable?.let { handler.removeCallbacks(it) }
+        previewCollapseRunnable = null
         // Re-apply the live position: if a slider change was missed while
         // the island was idle, the position is corrected on next use.
         repositionPill()
@@ -752,6 +890,8 @@ class IslandService : Service() {
     private fun collapse() {
         val wasShowingNotif = showingNotification
         isExpanded = false
+        previewCollapseRunnable?.let { handler.removeCallbacks(it) }
+        previewCollapseRunnable = null
         stopProgressPolling()
         stopClockTicker()
         showingNotification = false
@@ -770,16 +910,32 @@ class IslandService : Service() {
 
     private fun scheduleAutoCollapse() {
         collapseRunnable?.let { handler.removeCallbacks(it) }
+        val timeoutMs =
+            prefs().getInt(KEY_AUTO_CLOSE_S, 4).coerceIn(2, 30) * 1000L
         val r = Runnable { collapse() }
         collapseRunnable = r
-        handler.postDelayed(r, AUTO_COLLAPSE_MS)
+        handler.postDelayed(r, timeoutMs)
+    }
+
+    /** The live preview closes itself shortly after (v1.7): without this,
+     * moving a slider left the island expanded forever ("queda alargada"). */
+    private fun schedulePreviewCollapse() {
+        previewCollapseRunnable?.let { handler.removeCallbacks(it) }
+        val r = Runnable {
+            if (isExpanded) {
+                Log.d("IslaDinamica", "preview timeout -> collapse")
+                collapse()
+            }
+        }
+        previewCollapseRunnable = r
+        handler.postDelayed(r, PREVIEW_MS)
     }
 
     // ---- Smooth expand / collapse animation ----
 
     private fun measureExpandedHeight(): Int {
         val w = View.MeasureSpec.makeMeasureSpec(
-            dp(EXPANDED_CONTENT_DP), View.MeasureSpec.EXACTLY
+            popupWidthPx(), View.MeasureSpec.EXACTLY
         )
         val h = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         expandedView?.measure(w, h)
@@ -798,7 +954,7 @@ class IslandService : Service() {
         sizeAnimator?.cancel()
         val startW = params.width.takeIf { it > 0 } ?: root.width
         val startH = params.height.takeIf { it > 0 } ?: root.height
-        val targetW = if (toExpanded) dp(EXPANDED_W_DP) else collapsedSizePx().first
+        val targetW = if (toExpanded) popupWidthPx() else collapsedSizePx().first
         val targetH = if (toExpanded) measureExpandedHeight() else collapsedSizePx().second
         if (startW == targetW && startH == targetH) {
             finishSwitch(toExpanded)
@@ -1064,9 +1220,17 @@ class IslandService : Service() {
             // would waste megabytes of the phone's tight RAM.
             albumArt?.setImageBitmap(scaledBitmap(art, dp(168f)))
             collapsedIcon?.setImageBitmap(scaledBitmap(art, dp(64f)))
+            // Wide banner at the top of the music card, Essentials style:
+            // when YouTube/YouTube Music plays, the video thumbnail shows
+            // big here instead of only the small 56dp thumb.
+            musicBanner?.setImageBitmap(
+                bannerBitmap(art, popupWidthPx(), dp(112f))
+            )
+            musicBanner?.visibility = View.VISIBLE
         } else {
             albumArt?.setImageResource(R.drawable.ic_music_note)
             collapsedIcon?.setImageResource(R.drawable.ic_music_note)
+            musicBanner?.visibility = View.GONE
         }
         btnPlayPause?.setImageResource(
             if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
@@ -1078,6 +1242,24 @@ class IslandService : Service() {
     private fun scaledBitmap(src: Bitmap, px: Int): Bitmap {
         if (src.width <= px && src.height <= px) return src
         return Bitmap.createScaledBitmap(src, px, px, true)
+    }
+
+    /** Center-crops the cover to a wide banner (width x height px). */
+    private fun bannerBitmap(src: Bitmap, widthPx: Int, heightPx: Int): Bitmap {
+        val srcAspect = src.width.toFloat() / src.height
+        val dstAspect = widthPx.toFloat() / heightPx
+        val cropped = if (srcAspect > dstAspect) {
+            // Too wide: cut the sides, keep the vertical center.
+            val w = (src.height * dstAspect).toInt().coerceAtLeast(1)
+            val x = ((src.width - w) / 2).coerceAtLeast(0)
+            Bitmap.createBitmap(src, x, 0, w, src.height)
+        } else {
+            // Too tall: cut top/bottom, keep the horizontal center.
+            val h = (src.width / dstAspect).toInt().coerceAtLeast(1)
+            val y = ((src.height - h) / 2).coerceAtLeast(0)
+            Bitmap.createBitmap(src, 0, y, src.width, h)
+        }
+        return Bitmap.createScaledBitmap(cropped, widthPx, heightPx, true)
     }
 
     private fun updateProgress() {
