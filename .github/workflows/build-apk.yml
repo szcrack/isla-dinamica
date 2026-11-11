@@ -21,11 +21,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install Android platform and build tools
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+        with:
+          # setup-android's default package list includes the obsolete
+          # "tools" package, which no longer exists and makes sdkmanager
+          # exit 1. Install only what the build needs.
+          packages: platform-tools platforms;android-34 build-tools;34.0.0
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v3
