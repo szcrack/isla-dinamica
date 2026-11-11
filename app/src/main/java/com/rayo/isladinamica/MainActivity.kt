@@ -225,7 +225,7 @@ class MainActivity : Activity() {
         sbPopupW.progress =
             prefs.getInt(IslandService.KEY_POPUP_W, 352) - 280
         sbAutoClose.progress =
-            prefs.getInt(IslandService.KEY_AUTO_CLOSE_S, 4) - 2
+            (prefs.getLong(IslandService.KEY_POPUP_TIMEOUT_MS, 8000L) / 1000).toInt()
         sbLongPress.progress =
             (prefs.getInt(IslandService.KEY_LONG_PRESS_MS, 500) - 300) / 100
         swSwipeDismiss.isChecked =
@@ -256,7 +256,10 @@ class MainActivity : Activity() {
                         preview = true
                     }
                     R.id.sbAutoClose -> {
-                        editor.putInt(IslandService.KEY_AUTO_CLOSE_S, progress + 2)
+                        // SeekBar de 0 a 20 → 0 s (nunca) a 20 s (Claude, v1.9)
+                        editor.putLong(
+                            IslandService.KEY_POPUP_TIMEOUT_MS, progress * 1000L
+                        )
                     }
                     R.id.sbLongPress -> {
                         editor.putInt(
@@ -380,7 +383,11 @@ class MainActivity : Activity() {
         tvSizeW.text = "Ancho de la isla: ${sbSizeW.progress + 50}%"
         tvSizeH.text = "Alto de la isla: ${sbSizeH.progress + 50}%"
         tvPopupW.text = "Ancho de la tarjeta expandida: ${sbPopupW.progress + 280} dp"
-        tvAutoClose.text = "Cerrar sola a los: ${sbAutoClose.progress + 2} s"
+        tvAutoClose.text = if (sbAutoClose.progress == 0) {
+            "Cerrar sola a los: Nunca"
+        } else {
+            "Cerrar sola a los: ${sbAutoClose.progress} s"
+        }
         tvLongPress.text =
             "Toque largo para abrir la app: ${sbLongPress.progress * 100 + 300} ms"
     }

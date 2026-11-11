@@ -76,7 +76,8 @@ class IslandService : Service() {
         const val KEY_SIZE_W = "island_size_w_pct"      // 50..150 (% of camera hole)
         const val KEY_SIZE_H = "island_size_h_pct"      // 50..150
         const val KEY_POPUP_W = "island_popup_w_dp"     // 280..420 dp
-        const val KEY_AUTO_CLOSE_S = "island_auto_close_s" // 2..30 s
+        // Auto-close timeout in ms (Claude, v1.9): 0 = never, 1000..20000.
+        const val KEY_POPUP_TIMEOUT_MS = "popup_timeout_ms"
         const val KEY_LONG_PRESS_MS = "island_long_press_ms" // 300..1500 ms
         const val KEY_SWIPE_DISMISS = "island_swipe_dismiss" // true/false
 
@@ -906,11 +907,11 @@ class IslandService : Service() {
         // Re-apply the live position: if a slider change was missed while
         // the island was idle, the position is corrected on next use.
         repositionPill()
-        collapseRunnable?.let { handler.removeCallbacks(it) }
         updateExpandedUi()
         startClockTicker()
         animateSize(toExpanded = true)
         if (isPlaying && currentTheme.showProgressBar) startProgressPolling()
+        scheduleAutoCollapse() // replaces the loose removeCallbacks
     }
 
     private fun collapse() {
@@ -934,14 +935,20 @@ class IslandService : Service() {
         }
     }
 
-    private fun scheduleAutoCollapse() {
+    // 0 = nunca se cierra solo (Claude, v1.9)
+    private fun timeoutMs() = prefs().getLong(KEY_POPUP_TIMEOUT_MS, 8000L)
+
+    private fun scheduleAutoCollapse(delayMs: Long = timeoutMs()) {
         collapseRunnable?.let { handler.removeCallbacks(it) }
-        val timeoutMs =
-            prefs().getInt(KEY_AUTO_CLOSE_S, 4).coerceIn(2, 30) * 1000L
-        val r = Runnable { collapse() }
-        collapseRunnable = r
-        handler.postDelayed(r, timeoutMs)
+        collapseRunnable = null
+        if (delayMs <= 0L) return
+        collapseRunnable = Runnable {
+            // No cierres si el usuario está escribiendo una respuesta.
+            if (isExpanded && !isReplyFocused()) collapse()
+        }.also { handler.postDelayed(it, delayMs) }
     }
+
+    private fun isReplyFocused() = replyInput?.hasFocus() == true
 
     /** The live preview closes itself shortly after (v1.7): without this,
      * moving a slider left the island expanded forever ("queda alargada"). */
@@ -1110,8 +1117,7 @@ class IslandService : Service() {
         replyRow?.visibility = if (canReply) View.VISIBLE else View.GONE
         replyInput?.setText("")
         notifSection?.visibility = View.VISIBLE
-        expand()
-        scheduleAutoCollapse()
+        expand() // expand() already schedules the auto-collapse
     }
 
     private fun onNotifRemoved(key: String) {
