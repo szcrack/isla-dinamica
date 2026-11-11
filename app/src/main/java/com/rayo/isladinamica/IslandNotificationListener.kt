@@ -32,6 +32,13 @@ class IslandNotificationListener : NotificationListenerService() {
         } catch (e: PackageManager.NameNotFoundException) {
             sbn.packageName
         }
+        // Direct-reply action (e.g. WhatsApp "Responder"): the action whose
+        // RemoteInput allows free-form text. Kept in memory only.
+        val replyAction = n.actions?.firstOrNull { action ->
+            action.remoteInputs?.any { it.allowFreeFormInput } == true
+        }
+        val replyRemoteInput =
+            replyAction?.remoteInputs?.firstOrNull { it.allowFreeFormInput }
         IslandBridge.onNotification?.invoke(
             IslandBridge.Notif(
                 appIcon = icon,
@@ -40,7 +47,9 @@ class IslandNotificationListener : NotificationListenerService() {
                 text = text,
                 contentIntent = n.contentIntent,
                 packageName = sbn.packageName,
-                key = sbn.key
+                key = sbn.key,
+                replyAction = replyAction,
+                replyRemoteInput = replyRemoteInput
             )
         )
     }

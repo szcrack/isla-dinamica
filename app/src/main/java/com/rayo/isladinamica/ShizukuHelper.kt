@@ -30,12 +30,15 @@ object ShizukuHelper {
 
     /**
      * `cmd statusbar` disable flags (from `cmd statusbar` help). These hide
-     * the clock, the system icons and the notification icons from the status
-     * bar only — the quick-settings panel header clock is a separate view
-     * and keeps showing. Same mechanism Essentials uses
-     * (StatusBarManager.kt: "cmd statusbar send-disable-flag ...").
+     * the system icons and the notification icons from the status bar only.
+     * NOTE: `clock` is deliberately NOT here — the DISABLE_CLOCK flag also
+     * hides the clock in the quick-settings panel header, and the user needs
+     * that clock when the island is not in the foreground. The status-bar
+     * clock is hidden by `icon_blacklist` instead, which does not touch the
+     * QS clock. Same split Essentials uses (blacklist for the clock slot,
+     * disable flags for the icon groups).
      */
-    const val STATUSBAR_DISABLE_FLAGS = "clock system-icons notification-icons"
+    const val STATUSBAR_DISABLE_FLAGS = "system-icons notification-icons"
 
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())

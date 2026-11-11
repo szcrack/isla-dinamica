@@ -7,6 +7,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.app.Service
 import android.content.ComponentName
 import android.content.Context
@@ -14,23 +15,29 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
-import android.widget.ProgressBar
+import android.widget.SeekBar
 import android.widget.TextView
 import java.util.ArrayDeque
 
@@ -67,11 +74,19 @@ class IslandService : Service() {
     private var notifIcon: ImageView? = null
     private var notifHeader: TextView? = null
     private var notifText: TextView? = null
+    private var replyRow: View? = null
+    private var replyInput: EditText? = null
+    private var btnSendReply: ImageButton? = null
+    private var clockSection: View? = null
     private var albumArt: ImageView? = null
     private var musicTitle: TextView? = null
     private var musicArtist: TextView? = null
     private var musicTime: TextView? = null
-    private var progressBar: ProgressBar? = null
+    private var seekBar: SeekBar? = null
+    private var seeking = false
+    private var lastDuration = 0L
+    /** Camera cutout size in px when known — the collapsed pill is exactly this size. */
+    private var exactCutoutSize: Pair<Int, Int>? = null
     private var btnPrev: ImageButton? = null
     private var btnPlayPause: ImageButton? = null
     private var btnNext: ImageButton? = null
@@ -202,7 +217,7 @@ class IslandService : Service() {
         btnPrev?.setBackgroundResource(t.controlBackgroundRes)
         btnNext?.setBackgroundResource(t.controlBackgroundRes)
         btnPlayPause?.setBackgroundResource(t.playPauseBackgroundRes)
-        progressBar?.progressDrawable = resources.getDrawable(t.progressDrawableRes, null)
+        seekBar?.progressDrawable = resources.getDrawable(t.progressDrawableRes, null)
         updateExpandedUi()
         if (isPlaying && isExpanded && t.showProgressBar) {
             startProgressPolling()
@@ -262,11 +277,38 @@ class IslandService : Service() {
         notifIcon = view.findViewById(R.id.notifIcon)
         notifHeader = view.findViewById(R.id.notifHeader)
         notifText = view.findViewById(R.id.notifText)
+        replyRow = view.findViewById(R.id.replyRow)
+        replyInput = view.findViewById(R.id.replyInput)
+        btnSendReply = view.findViewById(R.id.btnSendReply)
+        clockSection = view.findViewById(R.id.clockSection)
         albumArt = view.findViewById(R.id.albumArt)
         musicTitle = view.findViewById(R.id.musicTitle)
         musicArtist = view.findViewById(R.id.musicArtist)
         musicTime = view.findViewById(R.id.musicTime)
-        progressBar = view.findViewById(R.id.progressBar)
+        seekBar = view.findViewById(R.id.seekBar)
+        seekBar?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                // While dragging, show the target time instead of the live one.
+                if (fromUser && lastDuration > 0) {
+                    val target = (progress * lastDuration) / 100
+                    musicTime?.text = "${formatTime(target)} / ${formatTime(lastDuration)}"
+                }
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {
+                seeking = true
+            }
+
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                seeking = false
+                val progress = sb?.progress ?: return
+                val duration = lastDuration
+                if (duration > 0) {
+                    mediaController?.transportControls
+                        ?.seekTo((progress * duration) / 100)
+                }
+            }
+        })
         btnPrev = view.findViewById(R.id.btnPrev)
         btnPlayPause = view.findViewById(R.id.btnPlayPause)
         btnNext = view.findViewById(R.id.btnNext)
@@ -277,6 +319,17 @@ class IslandService : Service() {
         // content sections are consumed by their own listeners below, so
         // they open the app instead of toggling.
         view.setOnClickListener { toggleExpand() }
+        // Tap outside the island closes the expanded card. The window gets
+        // FLAG_WATCH_OUTSIDE_TOUCH below, so touches outside its bounds
+        // arrive here as ACTION_OUTSIDE (and still reach the app underneath).
+        view.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE && isExpanded) {
+                collapse()
+                true
+            } else {
+                false
+            }
+        }
         notifSection?.setOnClickListener { openCurrentNotif() }
         musicSection?.setOnClickListener { openPlayerApp() }
         btnPlayPause?.setOnClickListener {
@@ -286,12 +339,75 @@ class IslandService : Service() {
         btnPrev?.setOnClickListener { mediaController?.transportControls?.skipToPrevious() }
         btnNext?.setOnClickListener { mediaController?.transportControls?.skipToNext() }
 
+        // Long-press on the expanded island opens the app (the notification's
+        // app, or the music player). Attached to the card itself and to both
+        // content sections, so it works anywhere on the card except on the
+        // transport buttons and the seek bar (they keep their own touch).
+        val openAppLongClick = View.OnLongClickListener {
+            if (isExpanded) {
+                openCurrentApp()
+                true
+            } else {
+                false
+            }
+        }
+        view.setOnLongClickListener(openAppLongClick)
+        notifSection?.setOnLongClickListener(openAppLongClick)
+        musicSection?.setOnLongClickListener(openAppLongClick)
+        clockSection?.setOnLongClickListener(openAppLongClick)
+
+        // Inline reply: the window is NOT_FOCUSABLE by default, so the
+        // keyboard cannot appear. On the first touch of the input the window
+        // is made focusable; when the input loses focus it goes back to
+        // not-focusable (and collapse() restores it too).
+        replyInput?.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                setWindowFocusable(true)
+            }
+            false
+        }
+        replyInput?.onFocusChangeListener =
+            View.OnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) {
+                    // Don't auto-collapse while the user is typing a reply.
+                    collapseRunnable?.let { handler.removeCallbacks(it) }
+                    collapseRunnable = null
+                } else {
+                    setWindowFocusable(false)
+                }
+            }
+        replyInput?.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                sendReply()
+                true
+            } else {
+                false
+            }
+        }
+        btnSendReply?.setOnClickListener { sendReply() }
+
+        // The collapsed pill is exactly the camera hole: its size comes from
+        // the display cutout bounding rect (in pixels, no dp conversion, so
+        // it stays exact at any density). The root padding is dropped so the
+        // window is exactly the rect — no extra margin around the hole.
+        cutoutRect()?.let { rect ->
+            exactCutoutSize = rect.width() to rect.height()
+            val lp = collapsedView?.layoutParams
+            if (lp != null) {
+                lp.width = rect.width()
+                lp.height = rect.height()
+                collapsedView?.layoutParams = lp
+            }
+            view.setPadding(0, 0, 0, 0)
+        }
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -305,8 +421,8 @@ class IslandService : Service() {
 
     // ---- Camera-centered positioning ----
 
-    /** Center of the camera cutout in screen pixels, or null when unknown. */
-    private fun cutoutCenter(): Pair<Int, Int>? {
+    /** The camera cutout rect closest to the screen center, or null. */
+    private fun cutoutRect(): Rect? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         return try {
             val cutout = windowManager.currentWindowMetrics.windowInsets.displayCutout
@@ -314,13 +430,21 @@ class IslandService : Service() {
             val rects = cutout.boundingRects
             if (rects.isEmpty()) return null
             val screenW = resources.displayMetrics.widthPixels
-            val rect = rects.minByOrNull {
-                kotlin.math.abs(it.centerX() - screenW / 2)
-            } ?: rects[0]
-            rect.centerX() to rect.centerY()
+            rects.minByOrNull { kotlin.math.abs(it.centerX() - screenW / 2) } ?: rects[0]
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** Collapsed pill size in px: exactly the camera hole when known. */
+    private fun collapsedSizePx(): Pair<Int, Int> {
+        return exactCutoutSize ?: (dp(COLLAPSED_W_DP) to dp(COLLAPSED_H_DP))
+    }
+
+    /** Center of the camera cutout in screen pixels, or null when unknown. */
+    private fun cutoutCenter(): Pair<Int, Int>? {
+        val rect = cutoutRect() ?: return null
+        return rect.centerX() to rect.centerY()
     }
 
     /**
@@ -333,7 +457,7 @@ class IslandService : Service() {
         val prefs = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
         val offX = dp(prefs.getInt(KEY_OFFSET_X, 0).toFloat())
         val offY = dp(prefs.getInt(KEY_OFFSET_Y, 0).toFloat())
-        val pillH = dp(COLLAPSED_H_DP)
+        val pillH = collapsedSizePx().second
         val center = cutoutCenter()
         return if (center != null) {
             val screenW = resources.displayMetrics.widthPixels
@@ -421,6 +545,9 @@ class IslandService : Service() {
     private fun expand() {
         if (isExpanded && !isAnimating) return
         isExpanded = true
+        // Re-apply the live position: if a slider change was missed while
+        // the island was idle, the position is corrected on next use.
+        repositionPill()
         collapseRunnable?.let { handler.removeCallbacks(it) }
         updateExpandedUi()
         startClockTicker()
@@ -435,6 +562,10 @@ class IslandService : Service() {
         stopClockTicker()
         showingNotification = false
         currentNotif = null
+        // The reply input gives the window focus for the keyboard; give it
+        // back when the island closes so touches pass through as usual.
+        hideKeyboard()
+        setWindowFocusable(false)
         updateCollapsedUi()
         animateSize(toExpanded = false)
         // Queued notifications are shown in sequence, one after another.
@@ -473,8 +604,8 @@ class IslandService : Service() {
         sizeAnimator?.cancel()
         val startW = params.width.takeIf { it > 0 } ?: root.width
         val startH = params.height.takeIf { it > 0 } ?: root.height
-        val targetW = dp(if (toExpanded) EXPANDED_W_DP else COLLAPSED_W_DP)
-        val targetH = if (toExpanded) measureExpandedHeight() else dp(COLLAPSED_H_DP)
+        val targetW = if (toExpanded) dp(EXPANDED_W_DP) else collapsedSizePx().first
+        val targetH = if (toExpanded) measureExpandedHeight() else collapsedSizePx().second
         if (startW == targetW && startH == targetH) {
             finishSwitch(toExpanded)
             return
@@ -580,6 +711,12 @@ class IslandService : Service() {
             "${notif.appName} • ${notif.title}"
         }
         notifText?.text = notif.text
+        // The reply row only appears when this notification can be answered
+        // inline (e.g. WhatsApp, Telegram); otherwise it stays hidden.
+        val canReply =
+            notif.replyAction != null && notif.replyRemoteInput != null
+        replyRow?.visibility = if (canReply) View.VISIBLE else View.GONE
+        replyInput?.setText("")
         notifSection?.visibility = View.VISIBLE
         expand()
         scheduleAutoCollapse()
@@ -609,6 +746,64 @@ class IslandService : Service() {
         val pkg = mediaController?.packageName ?: return
         collapse()
         openPackage(pkg)
+    }
+
+    /** Long-press on the expanded island: open the app being shown. */
+    private fun openCurrentApp() {
+        if (showingNotification && currentNotif != null) {
+            openCurrentNotif()
+        } else if (mediaController != null) {
+            openPlayerApp()
+        }
+    }
+
+    // ---- Inline reply ----
+
+    /** The overlay window is NOT_FOCUSABLE by default (so touches pass to
+     * other apps). The keyboard only shows when the window is focusable,
+     * so the reply input toggles that flag on demand. */
+    private fun setWindowFocusable(focusable: Boolean) {
+        val root = pillView ?: return
+        val params = root.layoutParams as? WindowManager.LayoutParams ?: return
+        val flag = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        val newFlags = if (focusable) params.flags and flag.inv() else params.flags or flag
+        if (newFlags == params.flags) return
+        params.flags = newFlags
+        try {
+            windowManager.updateViewLayout(root, params)
+        } catch (e: Exception) {
+            // Window is gone.
+        }
+    }
+
+    private fun hideKeyboard() {
+        val imm =
+            getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        val view = replyInput ?: pillView ?: return
+        imm.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+
+    /** Sends the typed text as a direct reply to the current notification. */
+    private fun sendReply() {
+        val notif = currentNotif ?: return
+        val action = notif.replyAction ?: return
+        val remoteInput = notif.replyRemoteInput ?: return
+        val text = replyInput?.text?.toString()?.trim().orEmpty()
+        if (text.isEmpty()) return
+        try {
+            val intent = Intent()
+            val results = Bundle()
+            results.putCharSequence(remoteInput.resultKey, text)
+            RemoteInput.addResultsToIntent(arrayOf(remoteInput), intent, results)
+            action.actionIntent.send(this, 0, intent)
+        } catch (e: Exception) {
+            // Reply failed (e.g. the action expired); stay open so the user
+            // can try again or open the app instead.
+            return
+        }
+        replyInput?.setText("")
+        hideKeyboard()
+        collapse()
     }
 
     private fun openPackage(pkg: String) {
@@ -694,10 +889,12 @@ class IslandService : Service() {
     private fun updateProgress() {
         val controller = mediaController ?: return
         val duration = controller.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        lastDuration = duration
+        if (seeking) return
         val pos = controller.playbackState?.position ?: 0L
         if (duration > 0) {
-            progressBar?.max = 100
-            progressBar?.progress = ((pos * 100) / duration).toInt().coerceIn(0, 100)
+            seekBar?.max = 100
+            seekBar?.progress = ((pos * 100) / duration).toInt().coerceIn(0, 100)
             musicTime?.text = "${formatTime(pos)} / ${formatTime(duration)}"
         }
     }
@@ -725,12 +922,19 @@ class IslandService : Service() {
         sectionDivider?.visibility =
             if (hasMusic && showingNotification) View.VISIBLE else View.GONE
         val showProgress = currentTheme.showProgressBar && hasMusic
-        progressBar?.visibility = if (showProgress) View.VISIBLE else View.GONE
+        seekBar?.visibility = if (showProgress) View.VISIBLE else View.GONE
         musicTime?.visibility = if (showProgress) View.VISIBLE else View.GONE
         if (showProgress) updateProgress()
     }
 
     private fun updateCollapsedUi() {
+        // At exact camera-hole size there is no room for the mini icon or
+        // the dot — the pill is just the ring around the camera.
+        if (exactCutoutSize != null) {
+            collapsedIcon?.visibility = View.GONE
+            collapsedDot?.visibility = View.GONE
+            return
+        }
         if (isPlaying) {
             collapsedIcon?.visibility = View.VISIBLE
             collapsedDot?.visibility = View.GONE

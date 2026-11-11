@@ -67,7 +67,19 @@ dumpsys deviceidle whitelist +com.rayo.isladinamica
 - **v1.2** (versionCode 3): isla centrada en la cámara (usa el recorte real
   de pantalla) con deslizadores X/Y en ajustes para afinar la posición;
   píldora colapsada chica abrazando la cámara; un toque expande y muestra
-  hora + fecha arriba; el interruptor ahora oculta reloj, iconos del sistema
-  e iconos de notificación de la barra con `cmd statusbar send-disable-flag`
-  (mismo mecanismo que Essentials) más `icon_blacklist` de respaldo — el
-  reloj del panel de control sigue visible.
+  hora + fecha arriba; el interruptor oculta iconos de la barra con
+  `cmd statusbar send-disable-flag` (mismo mecanismo que Essentials) más
+  `icon_blacklist` de respaldo. Corrección posterior: el flag `clock`
+  también escondía el reloj del panel de control, por eso en v1.3 se quitó
+  de los flags y el reloj de la barra se oculta solo con `icon_blacklist`.
+- **v1.3** (versionCode 4): el reloj del panel de control vuelve (el flag
+  `clock` ya no se usa; la barra sigue sin reloj gracias a `icon_blacklist`);
+  la píldora colapsada tiene el tamaño exacto del orificio de la cámara
+  (rect del recorte de pantalla, en píxeles, sin conversión a dp); la barra
+  de progreso de música es ahora una SeekBar que permite adelantar/atrasar
+  la canción al arrastrarla; tocar fuera de la isla expandida la cierra
+  (`FLAG_WATCH_OUTSIDE_TOUCH`); la posición X/Y se reaplica al expandir
+  por si algún cambio de deslizador se perdió; toque largo con la isla
+  expandida abre la app (la de la notificación o el reproductor); responder
+  mensajes dentro de la isla con un campo minimalista (RemoteInput, solo
+  aparece cuando la notificación admite respuesta directa, p. ej. WhatsApp).

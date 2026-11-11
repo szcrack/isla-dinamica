@@ -112,18 +112,16 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <ProgressBar
-                android:id="@+id/progressBar"
-                style="?android:attr/progressBarStyleHorizontal"
+            <SeekBar
+                android:id="@+id/seekBar"
                 android:layout_width="match_parent"
-                android:layout_height="4dp"
-                android:layout_marginTop="10dp"
+                android:layout_height="24dp"
+                android:layout_marginTop="2dp"
                 android:max="100"
                 android:progress="0"
-                android:indeterminate="false"
-                android:minHeight="4dp"
-                android:maxHeight="4dp"
                 android:progressDrawable="@drawable/progress_glow"
+                android:splitTrack="false"
+                android:thumb="@drawable/seek_thumb"
                 android:visibility="gone" />
 
             <LinearLayout
@@ -213,6 +211,43 @@
                 android:maxLines="3"
                 android:textColor="#DDDDDD"
                 android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/replyRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <EditText
+                    android:id="@+id/replyInput"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/reply_input_background"
+                    android:hint="Responder…"
+                    android:imeOptions="actionSend"
+                    android:inputType="textCapSentences"
+                    android:maxLines="1"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#99FFFFFF"
+                    android:textSize="14sp" />
+
+                <ImageButton
+                    android:id="@+id/btnSendReply"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Enviar respuesta"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_send" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
