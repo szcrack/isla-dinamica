@@ -83,3 +83,13 @@ dumpsys deviceidle whitelist +com.rayo.isladinamica
   expandida abre la app (la de la notificación o el reproductor); responder
   mensajes dentro de la isla con un campo minimalista (RemoteInput, solo
   aparece cuando la notificación admite respuesta directa, p. ej. WhatsApp).
+- **v1.4** (versionCode 5): tocar la parte de arriba de la isla expandida
+  (la zona del reloj, bajo la cámara) la minimiza de nuevo — en v1.3 el
+  toque largo de esa zona se tragaba el toque; tocar fuera sigue cerrándola.
+  Al mover los deslizadores de posición la isla se expande sola como vista
+  previa en vivo (la píldora colapsada es del tamaño del orificio y no se
+  ve al moverla); botón "Centrar isla en la cámara" para volver a 0,0.
+  Reloj del panel: en v1.3 se quitó `clock` de los flags pero el reloj del
+  panel seguía sin aparecer, así que se está probando si es `icon_blacklist`
+  quien lo esconde (prueba en el teléfono: lista negra solo con
+  `alarm_clock`, sin `clock`).

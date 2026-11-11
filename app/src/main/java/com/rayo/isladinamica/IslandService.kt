@@ -45,6 +45,7 @@ class IslandService : Service() {
 
     companion object {
         var isRunning = false
+        private var instance: IslandService? = null
         private const val CHANNEL_ID = "isla_dinamica"
         private const val NOTIF_ID = 1
         private const val AUTO_COLLAPSE_MS = 4000L
@@ -60,6 +61,17 @@ class IslandService : Service() {
         const val KEY_OFFSET_X = "island_offset_x_dp"
         const val KEY_OFFSET_Y = "island_offset_y_dp"
         const val OFFSET_RANGE_DP = 40
+
+        /**
+         * Shows the island so the user can see where it sits. Used while
+         * adjusting the position sliders in MainActivity: the collapsed pill
+         * is the size of the camera hole and hard to see, so the island is
+         * expanded as a live preview of the new position.
+         */
+        fun previewPosition() {
+            val service = instance ?: return
+            if (!service.isExpanded) service.expand()
+        }
     }
 
     private lateinit var windowManager: WindowManager
@@ -156,6 +168,7 @@ class IslandService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        instance = this
         currentTheme = IslandTheme.current(this)
         getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
@@ -174,6 +187,7 @@ class IslandService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        instance = null
         IslandBridge.onNotification = null
         IslandBridge.onNotificationRemoved = null
         getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
@@ -317,8 +331,13 @@ class IslandService : Service() {
 
         // Tap on empty pill area toggles expand/collapse. Taps on the two
         // content sections are consumed by their own listeners below, so
-        // they open the app instead of toggling.
+        // they open the app instead of toggling. The clock area at the top
+        // (right under the camera) also toggles: it is the "notch" the user
+        // taps to minimize the island. It needs its own listener because it
+        // is long-clickable (long-press opens the app), which would otherwise
+        // swallow the tap before it reaches the root.
         view.setOnClickListener { toggleExpand() }
+        clockSection?.setOnClickListener { toggleExpand() }
         // Tap outside the island closes the expanded card. The window gets
         // FLAG_WATCH_OUTSIDE_TOUCH below, so touches outside its bounds
         // arrive here as ACTION_OUTSIDE (and still reach the app underneath).

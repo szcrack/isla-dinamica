@@ -164,6 +164,10 @@ class MainActivity : Activity() {
                     .putInt(key, value)
                     .apply()
                 updateOffsetLabels()
+                // The collapsed pill is the size of the camera hole and hard
+                // to see: expand the island as a live preview so the new
+                // position is visible while dragging.
+                IslandService.previewPosition()
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -171,6 +175,17 @@ class MainActivity : Activity() {
         }
         sbOffsetX.setOnSeekBarChangeListener(offsetListener)
         sbOffsetY.setOnSeekBarChangeListener(offsetListener)
+        findViewById<Button>(R.id.btnCenterIsland).setOnClickListener {
+            getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putInt(IslandService.KEY_OFFSET_X, 0)
+                .putInt(IslandService.KEY_OFFSET_Y, 0)
+                .apply()
+            sbOffsetX.progress = IslandService.OFFSET_RANGE_DP
+            sbOffsetY.progress = IslandService.OFFSET_RANGE_DP
+            updateOffsetLabels()
+            IslandService.previewPosition()
+        }
 
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
@@ -289,11 +304,15 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Hides (or restores) the clock, the system icons and the notification
-     * icons in the status bar. Two mechanisms, same as Essentials:
-     * - `cmd statusbar send-disable-flag ...` via the Shizuku shell (hides
-     *   all three; the quick-settings panel clock is untouched).
-     * - `icon_blacklist` (persistent; hides the status-bar clock).
+     * Hides (or restores) the system icons and the notification icons in
+     * the status bar, plus the status-bar clock via the blacklist. Two
+     * mechanisms, same as Essentials:
+     * - `cmd statusbar send-disable-flag ...` via the Shizuku shell (system
+     *   and notification icons only — the `clock` flag is NOT used because
+     *   it also hides the quick-settings panel clock).
+     * - `icon_blacklist` (persistent; hides the status-bar clock — but on
+     *   this Motorola/Android 15 it also seems to hide the QS clock, which
+     *   is under investigation; see v1.4 notes in the README).
      * Without Shizuku only the blacklist part can run (clock only).
      */
     private fun setHideIcons(hide: Boolean) {

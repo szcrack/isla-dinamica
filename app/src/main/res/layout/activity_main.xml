@@ -169,6 +169,13 @@
             android:progress="40"
             android:layout_marginBottom="8dp" />
 
+        <Button
+            android:id="@+id/btnCenterIsland"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Centrar isla en la cámara"
+            android:layout_marginBottom="8dp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
