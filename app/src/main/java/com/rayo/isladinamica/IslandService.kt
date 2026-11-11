@@ -10,6 +10,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.app.Service
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
@@ -461,6 +462,19 @@ class IslandService : Service() {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        // DynamicSpot does the same on its island window (rg0.d / m0):
+        // always allow the window into the display-cutout area, and set
+        // privateFlags bit 64 (NO_MOVE_ANIMATION) so updateViewLayout
+        // moves while dragging the sliders don't animate.
+        params.layoutInDisplayCutoutMode =
+            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        try {
+            val field = params.javaClass.getField("privateFlags")
+            field.isAccessible = true
+            field.set(params, (field.get(params) as Int) or 64)
+        } catch (e: Exception) {
+            // Hidden field; harmless if it disappears on another ROM.
+        }
         val (baseX, baseY) = computePillPosition()
         params.x = baseX
         params.y = baseY
@@ -502,6 +516,12 @@ class IslandService : Service() {
      * the collapsed pill sits centered on the camera cutout, plus the user's
      * manual X/Y offsets. Falls back to vertically centered in the status
      * bar when the cutout is unknown.
+     *
+     * Negative Y is allowed on purpose (v1.6): DynamicSpot positions its
+     * island at -4dp by default and its popups at -2dp, so the pill can sit
+     * slightly above the top edge, overlapping it. v1.5 clamped y >= 0 and
+     * that is exactly why the island "wouldn't go up" past the status bar.
+     * The slider range (-40..+40dp) now moves the window for real.
      */
     private fun computePillPosition(): Pair<Int, Int> {
         val prefs = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
@@ -509,16 +529,13 @@ class IslandService : Service() {
         val offY = dp(prefs.getInt(KEY_OFFSET_Y, 0).toFloat())
         val pillH = collapsedSizePx().second
         val center = cutoutCenter()
-        // The island sits on the camera, which is at the very top of the
-        // screen: it cannot go higher than y = 0. Clamp it so a negative
-        // offset never pushes it off-screen (it would just disappear).
         val (x, y) = if (center != null) {
             val screenW = resources.displayMetrics.widthPixels
             (center.first - screenW / 2 + offX) to (center.second - pillH / 2 + offY)
         } else {
             offX to ((statusBarHeight() - pillH) / 2 + offY)
         }
-        return x to y.coerceAtLeast(0)
+        return x to y
     }
 
     /** Moves the live pill window to the current computed position. */
@@ -666,14 +683,40 @@ class IslandService : Service() {
         ) == AppOpsManager.MODE_ALLOWED
     }
 
-    /** The package currently in front, by most recent use. Null if unknown. */
+    /**
+     * The package currently in front. Uses the usage-events stream (last
+     * MOVE_TO_FOREGROUND in the last 10 minutes) instead of a 10-second
+     * queryUsageStats window: an app that has been sitting idle in front
+     * (the launcher, doing nothing) has no usage in the last 10 seconds,
+     * so the old code picked some other app's stale event and the clock
+     * came back "after a while" on its own. The events stream records the
+     * foreground change itself, so it stays correct while idle.
+     * Falls back to most-recently-used stats if no events are available.
+     * Null if unknown.
+     */
     private fun foregroundPackage(): String? {
         val manager = usageStatsManager ?: return null
         val now = System.currentTimeMillis()
+        val events = try {
+            manager.queryEvents(now - 600_000L, now)
+        } catch (e: Exception) {
+            null
+        }
+        if (events != null) {
+            val event = UsageEvents.Event()
+            var lastForeground: String? = null
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                    lastForeground = event.packageName
+                }
+            }
+            if (lastForeground != null) return lastForeground
+        }
         val stats = try {
             manager.queryUsageStats(
                 UsageStatsManager.INTERVAL_BEST,
-                now - 10_000L,
+                now - 60_000L,
                 now
             )
         } catch (e: Exception) {

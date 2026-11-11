@@ -10,3 +10,10 @@ app/build/
 # Mockups de diseño (webp binarios) — referencias locales, no se suben
 # con el conector de GitHub porque solo acepta archivos de texto UTF-8.
 design/
+
+# Ingeniería inversa a DynamicSpot (código de terceros, no se publica)
+reverse/*.apk
+reverse/src/
+reverse/src2/
+reverse/dex/
+reverse/manifest.txt
