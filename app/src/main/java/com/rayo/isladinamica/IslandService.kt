@@ -2,6 +2,7 @@ package com.rayo.isladinamica
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.AppOpsManager
 import android.app.KeyguardManager
@@ -22,10 +23,12 @@ import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -41,7 +44,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -93,6 +96,18 @@ class IslandService : Service() {
         const val KEY_MUSIC_VISUALIZER = "island_music_visualizer" // true/false
 
         /**
+         * Exact camera-hole calibration (guide §3, v1.11). Absolute pixels,
+         * not percent: the cutout rect includes margin and the real hole is
+         * round, so the exact size is calibrated by eye once. The size
+         * sliders (KEY_SIZE_W/H, percent) still scale this base.
+         */
+        const val KEY_PILL_W = "pill_w" // px, 20..200
+        const val KEY_PILL_H = "pill_h" // px, 20..200
+        const val KEY_PILL_DY = "pill_dy" // px, -60..+60, added to the Y offset
+        /** Fallback exact size: this phone's cutout is 70x105 px. */
+        const val DEFAULT_PILL_PX = 70
+
+        /**
          * Shows the island so the user can see where it sits. Used while
          * adjusting the position/size sliders in MainActivity: the collapsed
          * pill is the size of the camera hole and hard to see, so the island
@@ -102,6 +117,31 @@ class IslandService : Service() {
             val service = instance ?: return
             if (!service.isExpanded) service.expand()
             service.scheduleAutoCollapse(3000) // restarts on every move
+        }
+
+        /** Applies the calibrated collapsed size + position (guide §3). */
+        fun aplicarTamanoColapsado() {
+            instance?.aplicarTamanoColapsadoInternal()
+        }
+
+        /** Red overlay on the collapsed pill while calibrating (§3). */
+        fun setCalibracion(on: Boolean) {
+            instance?.setCalibracionInternal(on)
+        }
+
+        /** Foreground-app push from the accessibility service (§4). */
+        fun onAppAlFrente(pkg: String) {
+            instance?.onAppAlFrenteInternal(pkg)
+        }
+
+        /** Accessibility service connected/disconnected (§4). */
+        fun onAccessibilityChanged(connected: Boolean) {
+            instance?.onAccessibilityChangedInternal(connected)
+        }
+
+        /** Rebuilds the overlay (overlay type changed, §4). */
+        fun recrearOverlay() {
+            instance?.recreateOverlayInternal()
         }
     }
 
@@ -180,6 +220,30 @@ class IslandService : Service() {
     private var usageStatsManager: UsageStatsManager? = null
     private var launcherPackage: String? = null
     private var clockHidden: Boolean? = null
+    // Foreground package pushed by the accessibility service (§4). When set
+    // it wins over the UsageStats query; null means "use polling".
+    private var foregroundPkgOverride: String? = null
+    // Charging ring (§7.2): a separate non-touchable window around the pill.
+    private var anilloView: AnilloView? = null
+    private val ocultarAnilloRunnable = Runnable {
+        anilloView?.let {
+            if (it.isAttachedToWindow) {
+                try {
+                    windowManager.removeView(it)
+                } catch (e: Exception) {
+                    // Already gone.
+                }
+            }
+        }
+    }
+    private val receptorBateria = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) {
+            val b = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                ?: return
+            val nivel = b.getIntExtra(BatteryManager.EXTRA_LEVEL, 0)
+            mostrarAnillo(nivel, i?.action == Intent.ACTION_POWER_CONNECTED)
+        }
+    }
     private val clockPollRunnable = object : Runnable {
         override fun run() {
             updateLauncherClock()
@@ -190,8 +254,16 @@ class IslandService : Service() {
     // ---- Lock screen (DynamicSpot prefPopupLockscreen, v1.10) ----
     // Hides the island while the keyguard is locked when the user turned
     // the lock-screen switch off. Event-driven: lock/unlock broadcasts.
+    // Screen-off also restores the status-bar flags (§5 safety): if the
+    // service dies while the screen is off, the bar must not stay hidden.
+    // Screen-on re-applies them.
     private val lockscreenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> restoreStatusBarFlags()
+                Intent.ACTION_SCREEN_ON,
+                Intent.ACTION_USER_PRESENT -> reapplyHideIcons()
+            }
             updateLockscreenVisibility()
         }
     }
@@ -249,6 +321,7 @@ class IslandService : Service() {
             when (key) {
                 IslandTheme.KEY_THEME -> applyTheme()
                 KEY_OFFSET_X, KEY_OFFSET_Y, KEY_SIZE_W, KEY_SIZE_H,
+                KEY_PILL_W, KEY_PILL_H, KEY_PILL_DY,
                 KEY_NOTCH_SHAPE -> repositionPill()
                 KEY_POPUP_W -> if (isExpanded) repositionPill()
                 KEY_SHOW_LOCKSCREEN -> updateLockscreenVisibility()
@@ -316,6 +389,11 @@ class IslandService : Service() {
         usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
         launcherPackage = resolveLauncherPackage()
+        if (FrenteService.instance != null) {
+            // Accessibility service already connected: it pushes the
+            // foreground app, no 2 s polling needed (§4).
+            foregroundPkgOverride = foregroundPackage()
+        }
         if (hideIconsEnabled()) startClockPolling()
         keyguardManager =
             getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
@@ -325,6 +403,13 @@ class IslandService : Service() {
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_USER_PRESENT)
+            }
+        )
+        registerReceiver(
+            receptorBateria,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
             }
         )
         updateLockscreenVisibility()
@@ -340,11 +425,20 @@ class IslandService : Service() {
         isRunning = false
         instance = null
         stopClockPolling()
+        // Never leave the status bar hidden behind a dead island (§5).
+        restoreStatusBarFlags()
         try {
             unregisterReceiver(lockscreenReceiver)
         } catch (e: Exception) {
             // Never registered.
         }
+        try {
+            unregisterReceiver(receptorBateria)
+        } catch (e: Exception) {
+            // Never registered.
+        }
+        ocultarAnilloRunnable.run()
+        anilloView = null
         IslandBridge.onNotification = null
         IslandBridge.onNotificationRemoved = null
         getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
@@ -435,7 +529,12 @@ class IslandService : Service() {
     }
 
     private fun setupOverlay() {
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        // The window manager comes from the accessibility service when it
+        // is connected (§4): its windows can use TYPE_ACCESSIBILITY_OVERLAY,
+        // which sits above the status bar, so the bar can never steal the
+        // island's touches at y = 0. Otherwise the app's own manager.
+        windowManager = (FrenteService.instance ?: this)
+            .getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val view = LayoutInflater.from(this).inflate(R.layout.island_pill, null)
         pillView = view
         collapsedView = view.findViewById(R.id.collapsedView)
@@ -674,7 +773,7 @@ class IslandService : Service() {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
@@ -700,12 +799,75 @@ class IslandService : Service() {
         val (baseX, baseY) = computePillPosition()
         params.x = baseX
         params.y = baseY
-        windowManager.addView(view, params)
+        try {
+            windowManager.addView(view, params)
+        } catch (e: Exception) {
+            // The accessibility overlay failed (service died between the
+            // check and the add): fall back to a normal application overlay.
+            Log.w("IslaDinamica", "accessibility overlay failed, fallback", e)
+            windowManager =
+                getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            try {
+                windowManager.addView(view, params)
+            } catch (e2: Exception) {
+                Log.e("IslaDinamica", "overlay addView failed", e2)
+                return
+            }
+        }
         applyTheme()
         updateCollapsedUi()
         // Sync the collapsed pill size with the current mode (exact hole
         // vs standard pill) and position it on the camera.
-        repositionPill()
+        aplicarTamanoColapsadoInternal()
+    }
+
+    /** Window type for the island (and the ring): accessibility overlay
+     * when FrenteService is connected, normal overlay otherwise (§4). */
+    private fun overlayType(): Int =
+        if (FrenteService.instance != null)
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        else WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+
+    /**
+     * Rebuilds the overlay from scratch (overlay type changed because the
+     * accessibility service connected or disconnected, §4). Keeps the
+     * expanded/collapsed state: if the island was expanded, it re-expands
+     * after the rebuild.
+     */
+    private fun recreateOverlayInternal() {
+        val wasExpanded = isExpanded
+        pillView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                // Already gone.
+            }
+        }
+        pillView = null
+        setupOverlay()
+        if (wasExpanded) {
+            isExpanded = false
+            expand()
+        }
+    }
+
+    /** Foreground-app push from the accessibility service (§4). */
+    private fun onAppAlFrenteInternal(pkg: String) {
+        foregroundPkgOverride = pkg
+        updateLauncherClock()
+    }
+
+    /** Accessibility service connected/disconnected (§4). */
+    private fun onAccessibilityChangedInternal(connected: Boolean) {
+        if (connected) {
+            foregroundPkgOverride = foregroundPackage()
+            stopClockPolling()
+        } else {
+            foregroundPkgOverride = null
+            if (hideIconsEnabled()) startClockPolling()
+        }
+        updateLauncherClock()
     }
 
     // ---- Camera-centered positioning ----
@@ -731,10 +893,14 @@ class IslandService : Service() {
         prefs().getBoolean(KEY_NOTCH_SHAPE, true) && exactCutoutSize != null
 
     /** Collapsed pill size in px: exactly the camera hole when known,
-     * scaled by the user's size sliders (DynamicSpot seekGlowSizeX/Y). */
+     * calibrated by the user's absolute px sliders (§3, defaults = the
+     * cutout rect), scaled by the percent size sliders (DynamicSpot
+     * seekGlowSizeX/Y). */
     private fun collapsedSizePx(): Pair<Int, Int> {
         val base = if (isExactMode()) {
-            exactCutoutSize
+            // Round camera: height defaults to the cutout width (§3).
+            val def = exactCutoutSize?.first ?: DEFAULT_PILL_PX
+            prefs().getInt(KEY_PILL_W, def) to prefs().getInt(KEY_PILL_H, def)
         } else {
             null
         } ?: (dp(COLLAPSED_W_DP) to dp(COLLAPSED_H_DP))
@@ -772,13 +938,17 @@ class IslandService : Service() {
         val prefs = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
         val offX = dp(prefs.getInt(KEY_OFFSET_X, 0).toFloat())
         val offY = dp(prefs.getInt(KEY_OFFSET_Y, 0).toFloat())
+        // Fine vertical calibration in px (§3): added to the slider offset,
+        // never overwriting it.
+        val pillDy = prefs.getInt(KEY_PILL_DY, 0)
         val pillH = collapsedSizePx().second
         val center = cutoutCenter()
         val (x, y) = if (center != null) {
             val screenW = resources.displayMetrics.widthPixels
-            (center.first - screenW / 2 + offX) to (center.second - pillH / 2 + offY)
+            (center.first - screenW / 2 + offX) to
+                (center.second - pillH / 2 + offY + pillDy)
         } else {
-            offX to ((statusBarHeight() - pillH) / 2 + offY)
+            offX to ((statusBarHeight() - pillH) / 2 + offY + pillDy)
         }
         return x to y
     }
@@ -806,6 +976,42 @@ class IslandService : Service() {
         } catch (e: Exception) {
             // Window is gone.
         }
+    }
+
+    /**
+     * Applies the calibrated collapsed size + position (§3). Called at the
+     * end of setupOverlay(), inside finishSwitch(false), and live from the
+     * calibration sliders in MainActivity.
+     */
+    private fun aplicarTamanoColapsadoInternal() {
+        val root = pillView ?: return
+        collapsedView?.let {
+            val (w, h) = collapsedSizePx()
+            val lp = it.layoutParams
+            if (lp != null && (lp.width != w || lp.height != h)) {
+                lp.width = w
+                lp.height = h
+                it.layoutParams = lp
+            }
+        }
+        // The touch margin only exists while collapsed; the expanded card
+        // uses the full width (expand() clears the padding too).
+        if (!isExpanded) {
+            val side = if (isExactMode()) dp(12f) else dp(6f)
+            root.setPadding(side, 0, side, 0)
+        }
+        repositionPill()
+    }
+
+    /**
+     * Red overlay on the collapsed pill while calibrating (§3): move the
+     * sliders until the red covers the hole's edge, then release — it goes
+     * back to black. Collapses first if the island was expanded.
+     */
+    private fun setCalibracionInternal(on: Boolean) {
+        if (on && isExpanded) collapse()
+        collapsedView?.foreground =
+            if (on) ColorDrawable(0x80FF0000.toInt()) else null
     }
 
     // ---- Clock in the expanded island ----
@@ -865,6 +1071,29 @@ class IslandService : Service() {
         }
     }
 
+    /**
+     * Best-effort restore of the status-bar disable flags (NOT the
+     * blacklist: that is a persistent user setting, and clearing it would
+     * flip the hide toggle in MainActivity). Called when the service dies
+     * or the screen turns off (§5 safety): the flags are a SystemUI runtime
+     * state, so a dead island must never leave the bar hidden behind it.
+     * The flags are re-applied on the next start / screen-on.
+     */
+    private fun restoreStatusBarFlags() {
+        if (!ShizukuHelper.isBinderAlive() || !ShizukuHelper.hasPermission()) return
+        try {
+            ShizukuHelper.bind(
+                this,
+                onReady = {
+                    ShizukuHelper.exec(ShizukuHelper.hideStatusBarCommand(false)) { }
+                },
+                onError = { }
+            )
+        } catch (e: Exception) {
+            // Best-effort only.
+        }
+    }
+
     // ---- Launcher-aware clock ----
 
     private fun hideIconsEnabled(): Boolean =
@@ -872,6 +1101,9 @@ class IslandService : Service() {
             .getBoolean(ShizukuHelper.KEY_HIDE_ICONS, false)
 
     private fun startClockPolling() {
+        // The accessibility service pushes foreground changes instantly
+        // (§4): no 2 s polling while it is connected.
+        if (FrenteService.instance != null) return
         handler.removeCallbacks(clockPollRunnable)
         updateLauncherClock()
         handler.postDelayed(clockPollRunnable, CLOCK_POLL_MS)
@@ -894,7 +1126,9 @@ class IslandService : Service() {
     private fun updateLauncherClock() {
         if (!hideIconsEnabled()) return
         if (!isUsageAccessGranted()) return
-        val foreground = foregroundPackage() ?: return
+        // Accessibility push wins over the UsageStats query (§4); the
+        // query is the fallback when the service is not connected.
+        val foreground = foregroundPkgOverride ?: foregroundPackage() ?: return
         val onLauncher = foreground == launcherPackage
         val shouldHide = onLauncher
         if (clockHidden == shouldHide) return
@@ -1008,6 +1242,9 @@ class IslandService : Service() {
         if (isExpanded && !isAnimating &&
             expandedView?.visibility == View.VISIBLE) return
         isExpanded = true
+        // No side padding while expanded: the card uses the full width
+        // (the touch margin only exists while collapsed, §3).
+        pillView?.setPadding(0, 0, 0, 0)
         // Re-apply the live position: if a slider change was missed while
         // the island was idle, the position is corrected on next use.
         repositionPill()
@@ -1096,8 +1333,10 @@ class IslandService : Service() {
         isAnimating = true
         val gen = ++animGeneration
         val anim = ValueAnimator.ofFloat(0f, 1f)
-        anim.duration = ANIM_MS
-        anim.interpolator = AccelerateDecelerateInterpolator()
+        // Elastic animation (§7.1): a slight overshoot on arrival, HyperOS
+        // style. 1.25 = a little bounce; 1.0 = no bounce.
+        anim.duration = 380
+        anim.interpolator = PathInterpolator(0.2f, 1.25f, 0.3f, 1f)
         anim.addUpdateListener { va ->
             val f = va.animatedValue as Float
             params.width = (startW + ((targetW - startW) * f)).toInt()
@@ -1160,6 +1399,8 @@ class IslandService : Service() {
             // (Claude review, v1.8.)
             val side = if (isExactMode()) dp(12f) else dp(6f)
             pillView?.setPadding(side, 0, side, 0)
+            // Re-apply the calibrated size + position (§3).
+            aplicarTamanoColapsadoInternal()
         }
         val root = pillView ?: return
         val params = root.layoutParams as? WindowManager.LayoutParams ?: return
@@ -1170,6 +1411,49 @@ class IslandService : Service() {
         } catch (e: Exception) {
             // Window is gone.
         }
+    }
+
+    // ---- Charging ring (§7.2) ----
+
+    /**
+     * Ring around the camera showing the battery level (green, red at 15%
+     * or less when not charging). Separate non-touchable window, so it
+     * never interferes with the island's touches. Shows for 3.5 s when
+     * the charger is plugged or unplugged.
+     */
+    private fun mostrarAnillo(nivel: Int, cargando: Boolean) {
+        val pad = dp(8f)
+        val (w0, h0) = collapsedSizePx()
+        val w = w0 + 2 * pad
+        val h = h0 + 2 * pad
+        val v = anilloView ?: AnilloView(this).also { anilloView = it }
+        v.color = if (!cargando && nivel <= 15) 0xFFFF3B30.toInt() else 0xFF34C759.toInt()
+        val islandY =
+            (pillView?.layoutParams as? WindowManager.LayoutParams)?.y ?: 0
+        val lp = WindowManager.LayoutParams(
+            w, h, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = islandY - pad // same Y as the island, centered on the camera
+            layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+        try {
+            if (v.isAttachedToWindow) windowManager.updateViewLayout(v, lp)
+            else windowManager.addView(v, lp)
+        } catch (e: Exception) {
+            // Cosmetic only; never break the island for the ring.
+            return
+        }
+        ObjectAnimator.ofFloat(v, "progreso", 0f, nivel / 100f)
+            .setDuration(900).start()
+        handler.removeCallbacks(ocultarAnilloRunnable)
+        handler.postDelayed(ocultarAnilloRunnable, 3500)
     }
 
     // ---- Notifications (queued, tap to open) ----

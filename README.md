@@ -101,3 +101,47 @@ dumpsys deviceidle whitelist +com.rayo.isladinamica
   ya no puede sacar la isla de la pantalla (y >= 0): la cámara está en el
   borde superior, así que hacia arriba no hay más que el borde — el ajuste
   útil es hacia abajo.
+- **v1.6** (versionCode 7): híbrido con DynamicSpot — la posición vertical
+  ya puede subir de verdad (Y negativa, sin el tope de v1.5),
+  `layoutInDisplayCutoutMode=ALWAYS` + `privateFlags|=64` en la ventana de
+  la píldora; la detección de la app al frente usa el flujo de eventos de
+  UsageStats (último `MOVE_TO_FOREGROUND`, 10 min) con fallback a stats
+  de 60 s, así el launcher quieto ya no se pierde y el reloj no vuelve solo.
+- **v1.7** (versionCode 8): detección de gestos en crudo sobre la raíz
+  (toque <350 ms y <12 dp = abrir/cerrar, largo = abrir app, deslizar
+  >60 dp = cerrar; todo con log `IslaDinamica`); la vista previa se cierra
+  sola a los 2 s; ajustes de DynamicSpot migrados (tamaño 50–150%, ancho
+  de tarjeta 280–420 dp, auto-cierre 2–30 s, largo 300–1500 ms, deslizar
+  para cerrar); banner de música estilo Essentials (carátula 112 dp, p.
+  ej. miniatura de YouTube).
+- **v1.8** (versionCode 9, revisión de Claude al bug del toque):
+  `toggleExpand()` decide por lo visible, Toast temporal "Isla:
+  abrir/cerrar", guardia de generación en el animador, zona táctil
+  colapsada ~51 dp con padding transparente, `FLAG_LAYOUT_NO_LIMITS`,
+  las secciones colapsan si no hay nada que abrir, `FLAG_NOT_TOUCH_MODAL`
+  cuando la ventana es enfocable. No se instaló (la sustituyó v1.9).
+- **v1.9** (versionCode 10): auto-cierre configurable de Claude
+  (`popup_timeout_ms`, deslizador 0–20 s con "Nunca" en 0, no se cierra
+  mientras se escribe una respuesta).
+- **v1.10** (versionCode 11): resto de DynamicSpot de la lista de Claude
+  + vista previa unificada (`scheduleAutoCollapse(3000)` en cada
+  movimiento): interruptor de pantalla de bloqueo (oculta la isla con el
+  teléfono bloqueado), interruptor de forma de muesca (agujero exacto vs
+  píldora estándar 64x48) y visualizador de música (5 barras animadas en
+  la tarjeta mientras suena; decorativo, un visualizador real necesitaría
+  `CAPTURE_AUDIO_OUTPUT`).
+- **v1.11** (versionCode 12, guía `docs/guia-v1.11.md`): calibración del
+  tamaño exacto de la cámara (deslizadores Ancho/Alto/Y en píxeles, con
+  overlay rojo mientras se ajusta; se suma al offset Y, no lo pisa);
+  servicio de accesibilidad `FrenteService` (detección instantánea de la
+  app al frente y overlay `TYPE_ACCESSIBILITY_OVERLAY` por encima de la
+  barra; opcional, se activa a mano en Ajustes); `notification-peek` en
+  los flags para que las notificaciones flotantes del sistema no se
+  dupliquen con la isla; restauración segura de la barra (al morir el
+  servicio, al apagarse la pantalla y botón manual "Restaurar barra");
+  filtro de notificaciones duplicadas (resúmenes de grupo y mismo texto
+  en 2 s); animación elástica al expandir/colapsar (`PathInterpolator`,
+  380 ms); anillo de carga alrededor de la cámara al conectar/desconectar
+  el cargador (verde, rojo con 15% o menos). El mecanismo del reloj NO
+  cambió a flags `clock` (ese flag también esconde el reloj del panel):
+  sigue siendo `icon_blacklist` contextual.

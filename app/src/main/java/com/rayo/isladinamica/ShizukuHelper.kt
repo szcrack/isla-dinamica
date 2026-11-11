@@ -37,8 +37,11 @@ object ShizukuHelper {
      * clock is hidden by `icon_blacklist` instead, which does not touch the
      * QS clock. Same split Essentials uses (blacklist for the clock slot,
      * disable flags for the icon groups).
+     * `notification-peek` (v1.11, guide §5): hides the system's floating
+     * (heads-up) notifications, so the island is the one that shows them
+     * instead of the system showing them twice.
      */
-    const val STATUSBAR_DISABLE_FLAGS = "system-icons notification-icons"
+    const val STATUSBAR_DISABLE_FLAGS = "system-icons notification-icons notification-peek"
 
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())

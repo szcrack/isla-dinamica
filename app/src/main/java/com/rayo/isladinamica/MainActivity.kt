@@ -32,6 +32,16 @@ class MainActivity : Activity() {
     private lateinit var btnShizukuPermission: Button
     private lateinit var btnShizukuApply: Button
     private lateinit var btnUsageAccess: Button
+    private lateinit var tvA11yStatus: TextView
+    private lateinit var btnA11y: Button
+    private lateinit var btnRestoreBar: Button
+    private lateinit var sbCalW: SeekBar
+    private lateinit var sbCalH: SeekBar
+    private lateinit var sbCalY: SeekBar
+    private lateinit var tvCalW: TextView
+    private lateinit var tvCalH: TextView
+    private lateinit var tvCalY: TextView
+    private lateinit var btnResetCal: Button
     private lateinit var swHideIcons: Switch
     private lateinit var swSwipeDismiss: Switch
     private lateinit var swShowLockscreen: Switch
@@ -91,6 +101,22 @@ class MainActivity : Activity() {
         btnUsageAccess.setOnClickListener {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
         }
+        // ---- Detección rápida por accesibilidad (§4) ----
+        // Optional: while it is on, the launcher-aware clock switches
+        // instantly and the island sits above the status bar. Enabled by
+        // hand in Settings → Accessibility → Downloaded apps. On Android
+        // 13+ a sideloaded app may first need "Allow restricted settings"
+        // (app info → ⋮).
+        tvA11yStatus = findViewById(R.id.tvA11yStatus)
+        btnA11y = findViewById(R.id.btnA11y)
+        btnA11y.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        // ---- Restaurar barra (§5 safety) ----
+        // Manual rescue if the bar ever stays hidden: clears the disable
+        // flags and the icon blacklist and turns the hide toggle off.
+        btnRestoreBar = findViewById(R.id.btnRestoreBar)
+        btnRestoreBar.setOnClickListener { restoreBar() }
         btnToggle = findViewById(R.id.btnToggleService)
         btnShizukuPermission = findViewById(R.id.btnShizukuPermission)
         btnShizukuApply = findViewById(R.id.btnShizukuApply)
@@ -206,6 +232,38 @@ class MainActivity : Activity() {
             sbOffsetY.progress = IslandService.OFFSET_RANGE_DP
             updateOffsetLabels()
             IslandService.previewPosition()
+        }
+
+        // ---- Calibración del tamaño exacto (§3) ----
+        // Absolute pixels (20..200, Y -60..+60). While a slider is held
+        // the pill turns red so its edge is visible against the hole.
+        sbCalW = findViewById(R.id.sbCalW)
+        sbCalH = findViewById(R.id.sbCalH)
+        sbCalY = findViewById(R.id.sbCalY)
+        tvCalW = findViewById(R.id.tvCalW)
+        tvCalH = findViewById(R.id.tvCalH)
+        tvCalY = findViewById(R.id.tvCalY)
+        btnResetCal = findViewById(R.id.btnResetCal)
+        setupCalSlider(sbCalW, tvCalW, IslandService.KEY_PILL_W, 20, 200,
+            IslandService.DEFAULT_PILL_PX, "Ancho exacto")
+        setupCalSlider(sbCalH, tvCalH, IslandService.KEY_PILL_H, 20, 200,
+            IslandService.DEFAULT_PILL_PX, "Alto exacto")
+        setupCalSlider(sbCalY, tvCalY, IslandService.KEY_PILL_DY, -60, 60,
+            0, "Posición Y fina")
+        btnResetCal.setOnClickListener {
+            getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .remove(IslandService.KEY_PILL_W)
+                .remove(IslandService.KEY_PILL_H)
+                .remove(IslandService.KEY_PILL_DY)
+                .apply()
+            sbCalW.progress = IslandService.DEFAULT_PILL_PX - 20
+            sbCalH.progress = IslandService.DEFAULT_PILL_PX - 20
+            sbCalY.progress = 60
+            tvCalW.text = "Ancho exacto: ${IslandService.DEFAULT_PILL_PX} px"
+            tvCalH.text = "Alto exacto: ${IslandService.DEFAULT_PILL_PX} px"
+            tvCalY.text = "Posición Y fina: 0 px"
+            IslandService.aplicarTamanoColapsado()
         }
 
         // ---- Tamaño y comportamiento (ajustes de DynamicSpot) ----
@@ -341,6 +399,111 @@ class MainActivity : Activity() {
         updateStatus()
         updateShizukuStatus()
         updateUsageAccessStatus()
+        updateA11yStatus()
+    }
+
+    /** Accessibility service status (§4). */
+    private fun updateA11yStatus() {
+        val enabled = isAccessibilityEnabled()
+        tvA11yStatus.text = if (enabled) {
+            "Detección rápida: activa — el reloj cambia al instante y la isla queda por encima de la barra"
+        } else {
+            "Detección rápida: inactiva — el reloj tarda hasta 2 s en cambiar (detección por uso)"
+        }
+        btnA11y.isEnabled = !enabled
+    }
+
+    private fun isAccessibilityEnabled(): Boolean {
+        val cn = ComponentName(this, FrenteService::class.java)
+        val enabled =
+            Settings.Secure.getString(contentResolver, "enabled_accessibility_services")
+                ?: ""
+        return enabled.contains(cn.flattenToString())
+    }
+
+    /**
+     * Manual rescue if the status bar ever stays hidden (§5): clears the
+     * disable flags and the icon blacklist and turns the hide toggle off.
+     * The flags need Shizuku; the blacklist only needs WRITE_SECURE_SETTINGS.
+     */
+    private fun restoreBar() {
+        getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putBoolean(ShizukuHelper.KEY_HIDE_ICONS, false)
+            .apply()
+        if (ShizukuHelper.isBinderAlive() && ShizukuHelper.hasPermission()) {
+            ShizukuHelper.bind(
+                this,
+                onReady = {
+                    ShizukuHelper.exec(ShizukuHelper.hideStatusBarCommand(false)) { res ->
+                        appendShizukuLog("Barra: $res")
+                    }
+                    ShizukuHelper.exec(ShizukuHelper.hideIconsCommand(false)) { res ->
+                        appendShizukuLog("Iconos: $res")
+                        syncHideIconsSwitch()
+                    }
+                },
+                onError = { appendShizukuLog("Barra: $it") }
+            )
+            return
+        }
+        if (hasWriteSecureSettings()) {
+            try {
+                Settings.Secure.putString(contentResolver, "icon_blacklist", "")
+                appendShizukuLog("Barra: reloj restaurado (las banderas necesitan Shizuku)")
+            } catch (e: Exception) {
+                appendShizukuLog("Barra: ${e.message}")
+            }
+            syncHideIconsSwitch()
+            return
+        }
+        Toast.makeText(
+            this,
+            "Necesitas Shizuku para restaurar la barra.",
+            Toast.LENGTH_LONG
+        ).show()
+        syncHideIconsSwitch()
+    }
+
+    /**
+     * One calibration slider (§3): absolute pixels, saved live. While the
+     * user holds it the pill turns red (setCalibracion) so its edge is
+     * visible against the camera hole; on release it goes back to black.
+     */
+    private fun setupCalSlider(
+        sb: SeekBar,
+        tv: TextView,
+        key: String,
+        min: Int,
+        max: Int,
+        def: Int,
+        nombre: String
+    ) {
+        val prefs = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+        sb.max = max - min
+        sb.progress = prefs.getInt(key, def) - min
+        tv.text = "$nombre: ${prefs.getInt(key, def)} px"
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(
+                s: SeekBar?,
+                progress: Int,
+                fromUser: Boolean
+            ) {
+                val v = progress + min
+                tv.text = "$nombre: $v px"
+                if (!fromUser) return
+                prefs.edit().putInt(key, v).apply()
+                IslandService.aplicarTamanoColapsado()
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar?) {
+                IslandService.setCalibracion(true)
+            }
+
+            override fun onStopTrackingTouch(s: SeekBar?) {
+                IslandService.setCalibracion(false)
+            }
+        })
     }
 
     /** Usage access (for the launcher-aware clock): granted in Settings. */

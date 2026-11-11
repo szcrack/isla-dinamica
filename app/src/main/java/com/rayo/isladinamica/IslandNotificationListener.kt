@@ -2,15 +2,26 @@ package com.rayo.isladinamica
 
 import android.app.Notification
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
 class IslandNotificationListener : NotificationListenerService() {
 
+    // Duplicate filter (guide §6, v1.11): WhatsApp posts several
+    // notifications per message (message, group summary, updates), and
+    // some apps re-post the same one. Same key + text within 2 s is a
+    // repeat. Group summaries are never shown. Old entries are pruned
+    // when the map grows, so it cannot leak.
+    private val vistas = HashMap<String, Long>()
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         // Skip our own foreground-service notification.
         if (sbn.packageName == packageName) return
         val n = sbn.notification
+        // Group summaries (e.g. WhatsApp's "3 mensajes nuevos") are
+        // duplicates of the individual messages; never show them.
+        if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         // Ongoing / foreground-service notifications (e.g. music players) are
         // handled through MediaSession, not through this path.
         if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return
@@ -20,6 +31,15 @@ class IslandNotificationListener : NotificationListenerService() {
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         if (title.isEmpty() && text.isEmpty()) return
+
+        val clave = sbn.key + text
+        val ahora = SystemClock.elapsedRealtime()
+        if (ahora - (vistas[clave] ?: 0L) < 2000) return // repetida
+        vistas[clave] = ahora
+        if (vistas.size > 100) {
+            val limite = ahora - 10_000L
+            vistas.entries.removeIf { it.value < limite }
+        }
 
         val icon = try {
             packageManager.getApplicationIcon(sbn.packageName)

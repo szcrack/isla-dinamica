@@ -132,6 +132,27 @@
             android:layout_marginBottom="8dp" />
 
         <TextView
+            android:id="@+id/tvA11yStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnA11y"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Activar detección rápida (accesibilidad)"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnRestoreBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Restaurar barra de estado"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
             android:id="@+id/tvShizukuLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -188,6 +209,73 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Centrar isla en la cámara"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Calibración del tamaño exacto"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="El agujero de la cámara es redondo y el rectángulo del sistema incluye margen: afina el tamaño en píxeles hasta que cubra el agujero. Mientras mueves un deslizador la píldora se pone roja para ver su borde; al soltar vuelve a negro."
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvCalW"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ancho exacto: 70 px"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbCalW"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="180"
+            android:progress="50"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvCalH"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Alto exacto: 70 px"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbCalH"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="180"
+            android:progress="50"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvCalY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Posición Y fina: 0 px"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbCalY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="120"
+            android:progress="60"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnResetCal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Restablecer calibración"
             android:layout_marginBottom="8dp" />
 
         <TextView
