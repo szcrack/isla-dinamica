@@ -64,6 +64,10 @@ dumpsys deviceidle whitelist +com.rayo.isladinamica
 
 - **v1.1** (versionCode 2): notificaciones + música, 3 temas, Shizuku,
   instalada y verificada en Motorola Edge (2022), Android 15.
-- **v1.2** (pendiente): ocultar solo la hora y los iconos de la barra en el
-  inicio (el reloj sigue visible en el panel de control), isla centrada en
-  la cámara con ajuste manual de posición, y hora + fecha al expandir.
+- **v1.2** (versionCode 3): isla centrada en la cámara (usa el recorte real
+  de pantalla) con deslizadores X/Y en ajustes para afinar la posición;
+  píldora colapsada chica abrazando la cámara; un toque expande y muestra
+  hora + fecha arriba; el interruptor ahora oculta reloj, iconos del sistema
+  e iconos de notificación de la barra con `cmd statusbar send-disable-flag`
+  (mismo mecanismo que Essentials) más `icon_blacklist` de respaldo — el
+  reloj del panel de control sigue visible.

@@ -8,7 +8,7 @@
 
     <LinearLayout
         android:id="@+id/collapsedView"
-        android:layout_width="120dp"
+        android:layout_width="52dp"
         android:layout_height="36dp"
         android:gravity="center"
         android:orientation="horizontal">
@@ -34,6 +34,29 @@
         android:orientation="vertical"
         android:padding="8dp"
         android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/clockSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvIslandTime"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvIslandDate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#DDDDDD"
+                android:textSize="13sp" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/musicSection"

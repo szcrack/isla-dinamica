@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.RadioGroup
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -19,7 +20,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val SHIZUKU_REQUEST_CODE = 0
-        private const val KEY_HIDE_ICONS = "hide_status_icons"
     }
 
     private lateinit var tvOverlay: TextView
@@ -32,6 +32,10 @@ class MainActivity : Activity() {
     private lateinit var btnShizukuApply: Button
     private lateinit var swHideIcons: Switch
     private lateinit var rgTheme: RadioGroup
+    private lateinit var sbOffsetX: SeekBar
+    private lateinit var sbOffsetY: SeekBar
+    private lateinit var tvOffsetX: TextView
+    private lateinit var tvOffsetY: TextView
 
     private var syncingSwitch = false
     private var grantsAutoApplied = false
@@ -131,6 +135,43 @@ class MainActivity : Activity() {
             setHideIcons(isChecked)
         }
 
+        // ---- Posición de la isla (deslizadores X/Y, -40..+40 dp) ----
+        sbOffsetX = findViewById(R.id.sbOffsetX)
+        sbOffsetY = findViewById(R.id.sbOffsetY)
+        tvOffsetX = findViewById(R.id.tvOffsetX)
+        tvOffsetY = findViewById(R.id.tvOffsetY)
+        val prefs = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+        sbOffsetX.progress =
+            prefs.getInt(IslandService.KEY_OFFSET_X, 0) + IslandService.OFFSET_RANGE_DP
+        sbOffsetY.progress =
+            prefs.getInt(IslandService.KEY_OFFSET_Y, 0) + IslandService.OFFSET_RANGE_DP
+        updateOffsetLabels()
+        val offsetListener = object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(
+                seekBar: SeekBar?,
+                progress: Int,
+                fromUser: Boolean
+            ) {
+                if (!fromUser) return
+                val value = progress - IslandService.OFFSET_RANGE_DP
+                val key = if (seekBar?.id == R.id.sbOffsetX) {
+                    IslandService.KEY_OFFSET_X
+                } else {
+                    IslandService.KEY_OFFSET_Y
+                }
+                getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putInt(key, value)
+                    .apply()
+                updateOffsetLabels()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        }
+        sbOffsetX.setOnSeekBarChangeListener(offsetListener)
+        sbOffsetY.setOnSeekBarChangeListener(offsetListener)
+
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionListener)
@@ -193,6 +234,13 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun updateOffsetLabels() {
+        val x = sbOffsetX.progress - IslandService.OFFSET_RANGE_DP
+        val y = sbOffsetY.progress - IslandService.OFFSET_RANGE_DP
+        tvOffsetX.text = "Posición horizontal: ${if (x >= 0) "+$x" else "$x"} dp"
+        tvOffsetY.text = "Posición vertical: ${if (y >= 0) "+$y" else "$y"} dp"
+    }
+
     // ---- Shizuku UI ----
 
     private fun updateShizukuStatus() {
@@ -241,19 +289,25 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Hides (or restores) the status-bar icons via icon_blacklist.
-     * Prefers Shizuku; if the app already holds WRITE_SECURE_SETTINGS it
-     * writes the setting directly. The setting itself survives reboots.
+     * Hides (or restores) the clock, the system icons and the notification
+     * icons in the status bar. Two mechanisms, same as Essentials:
+     * - `cmd statusbar send-disable-flag ...` via the Shizuku shell (hides
+     *   all three; the quick-settings panel clock is untouched).
+     * - `icon_blacklist` (persistent; hides the status-bar clock).
+     * Without Shizuku only the blacklist part can run (clock only).
      */
     private fun setHideIcons(hide: Boolean) {
         getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
             .edit()
-            .putBoolean(KEY_HIDE_ICONS, hide)
+            .putBoolean(ShizukuHelper.KEY_HIDE_ICONS, hide)
             .apply()
         if (ShizukuHelper.isBinderAlive() && ShizukuHelper.hasPermission()) {
             ShizukuHelper.bind(
                 this,
                 onReady = {
+                    ShizukuHelper.exec(ShizukuHelper.hideStatusBarCommand(hide)) { res ->
+                        appendShizukuLog("Barra: $res")
+                    }
                     ShizukuHelper.exec(ShizukuHelper.hideIconsCommand(hide)) { res ->
                         appendShizukuLog("Iconos: $res")
                         syncHideIconsSwitch()
@@ -273,7 +327,7 @@ class MainActivity : Activity() {
                     "icon_blacklist",
                     if (hide) ShizukuHelper.ICON_BLACKLIST else ""
                 )
-                appendShizukuLog("Iconos: aplicado directo ✓")
+                appendShizukuLog("Iconos: solo reloj (sin Shizuku no se ocultan sistema/notificaciones)")
             } catch (e: Exception) {
                 appendShizukuLog("Iconos: ${e.message}")
             }

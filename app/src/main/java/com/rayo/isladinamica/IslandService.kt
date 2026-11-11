@@ -44,10 +44,15 @@ class IslandService : Service() {
         private const val PROGRESS_POLL_MS = 500L
         private const val ANIM_MS = 300L
         private const val MAX_QUEUE = 5
-        private const val COLLAPSED_W_DP = 132f
+        private const val COLLAPSED_W_DP = 64f
         private const val COLLAPSED_H_DP = 48f
         private const val EXPANDED_W_DP = 352f
         private const val EXPANDED_CONTENT_DP = 340f
+
+        /** Manual island position offsets (dp, -40..+40), set in MainActivity. */
+        const val KEY_OFFSET_X = "island_offset_x_dp"
+        const val KEY_OFFSET_Y = "island_offset_y_dp"
+        const val OFFSET_RANGE_DP = 40
     }
 
     private lateinit var windowManager: WindowManager
@@ -70,6 +75,8 @@ class IslandService : Service() {
     private var btnPrev: ImageButton? = null
     private var btnPlayPause: ImageButton? = null
     private var btnNext: ImageButton? = null
+    private var clockTime: TextView? = null
+    private var clockDate: TextView? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var collapseRunnable: Runnable? = null
@@ -87,7 +94,10 @@ class IslandService : Service() {
 
     private val prefsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == IslandTheme.KEY_THEME) applyTheme()
+            when (key) {
+                IslandTheme.KEY_THEME -> applyTheme()
+                KEY_OFFSET_X, KEY_OFFSET_Y -> repositionPill()
+            }
         }
 
     // Progress is only polled while the expanded card is visible and music
@@ -138,6 +148,7 @@ class IslandService : Service() {
         startForeground(NOTIF_ID, buildForegroundNotification())
         setupOverlay()
         setupMediaSessions()
+        reapplyHideIcons()
         IslandBridge.onNotification = { notif -> showNotification(notif) }
         IslandBridge.onNotificationRemoved = { key -> onNotifRemoved(key) }
     }
@@ -259,6 +270,8 @@ class IslandService : Service() {
         btnPrev = view.findViewById(R.id.btnPrev)
         btnPlayPause = view.findViewById(R.id.btnPlayPause)
         btnNext = view.findViewById(R.id.btnNext)
+        clockTime = view.findViewById(R.id.tvIslandTime)
+        clockDate = view.findViewById(R.id.tvIslandDate)
 
         // Tap on empty pill area toggles expand/collapse. Taps on the two
         // content sections are consumed by their own listeners below, so
@@ -282,10 +295,123 @@ class IslandService : Service() {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = statusBarHeight() + dp(8f)
+        val (baseX, baseY) = computePillPosition()
+        params.x = baseX
+        params.y = baseY
         windowManager.addView(view, params)
         applyTheme()
         updateCollapsedUi()
+    }
+
+    // ---- Camera-centered positioning ----
+
+    /** Center of the camera cutout in screen pixels, or null when unknown. */
+    private fun cutoutCenter(): Pair<Int, Int>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return try {
+            val cutout = windowManager.currentWindowMetrics.windowInsets.displayCutout
+                ?: return null
+            val rects = cutout.boundingRects
+            if (rects.isEmpty()) return null
+            val screenW = resources.displayMetrics.widthPixels
+            val rect = rects.minByOrNull {
+                kotlin.math.abs(it.centerX() - screenW / 2)
+            } ?: rects[0]
+            rect.centerX() to rect.centerY()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Pill window position (x offset from screen center, y from the top) so
+     * the collapsed pill sits centered on the camera cutout, plus the user's
+     * manual X/Y offsets. Falls back to vertically centered in the status
+     * bar when the cutout is unknown.
+     */
+    private fun computePillPosition(): Pair<Int, Int> {
+        val prefs = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+        val offX = dp(prefs.getInt(KEY_OFFSET_X, 0).toFloat())
+        val offY = dp(prefs.getInt(KEY_OFFSET_Y, 0).toFloat())
+        val pillH = dp(COLLAPSED_H_DP)
+        val center = cutoutCenter()
+        return if (center != null) {
+            val screenW = resources.displayMetrics.widthPixels
+            (center.first - screenW / 2 + offX) to (center.second - pillH / 2 + offY)
+        } else {
+            offX to ((statusBarHeight() - pillH) / 2 + offY)
+        }
+    }
+
+    /** Moves the live pill window to the current computed position. */
+    private fun repositionPill() {
+        val root = pillView ?: return
+        val params = root.layoutParams as? WindowManager.LayoutParams ?: return
+        val (x, y) = computePillPosition()
+        params.x = x
+        params.y = y
+        try {
+            windowManager.updateViewLayout(root, params)
+        } catch (e: Exception) {
+            // Window is gone.
+        }
+    }
+
+    // ---- Clock in the expanded island ----
+
+    private val clockRunnable = object : Runnable {
+        override fun run() {
+            updateClock()
+            if (isExpanded) {
+                // Next tick at the next minute boundary.
+                val delay = 60_000L - (System.currentTimeMillis() % 60_000L)
+                handler.postDelayed(this, delay)
+            }
+        }
+    }
+
+    private fun updateClock() {
+        val locale = java.util.Locale("es", "MX")
+        val now = java.util.Date()
+        clockTime?.text =
+            java.text.SimpleDateFormat("HH:mm", locale).format(now)
+        clockDate?.text =
+            java.text.SimpleDateFormat("EEEE, d 'de' MMMM", locale).format(now)
+    }
+
+    private fun startClockTicker() {
+        handler.removeCallbacks(clockRunnable)
+        updateClock()
+        val delay = 60_000L - (System.currentTimeMillis() % 60_000L)
+        handler.postDelayed(clockRunnable, delay)
+    }
+
+    private fun stopClockTicker() {
+        handler.removeCallbacks(clockRunnable)
+    }
+
+    /**
+     * The `cmd statusbar` disable flags do not survive a SystemUI restart
+     * or a reboot, so re-apply them (and the icon blacklist) every time
+     * the island starts, when the toggle is on. Silent no-op without Shizuku.
+     */
+    private fun reapplyHideIcons() {
+        val hide = getSharedPreferences(IslandTheme.PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(ShizukuHelper.KEY_HIDE_ICONS, false)
+        if (!hide) return
+        if (!ShizukuHelper.isBinderAlive() || !ShizukuHelper.hasPermission()) return
+        try {
+            ShizukuHelper.bind(
+                this,
+                onReady = {
+                    ShizukuHelper.exec(ShizukuHelper.hideStatusBarCommand(true)) { }
+                    ShizukuHelper.exec(ShizukuHelper.hideIconsCommand(true)) { }
+                },
+                onError = { }
+            )
+        } catch (e: Exception) {
+            // Hiding is best-effort; the island works without it.
+        }
     }
 
     private fun toggleExpand() {
@@ -297,6 +423,7 @@ class IslandService : Service() {
         isExpanded = true
         collapseRunnable?.let { handler.removeCallbacks(it) }
         updateExpandedUi()
+        startClockTicker()
         animateSize(toExpanded = true)
         if (isPlaying && currentTheme.showProgressBar) startProgressPolling()
     }
@@ -305,6 +432,7 @@ class IslandService : Service() {
         val wasShowingNotif = showingNotification
         isExpanded = false
         stopProgressPolling()
+        stopClockTicker()
         showingNotification = false
         currentNotif = null
         updateCollapsedUi()

@@ -107,14 +107,66 @@
             android:id="@+id/swHideIcons"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Ocultar iconos de la barra de estado"
+            android:text="Ocultar iconos de la barra (reloj, sistema y notificaciones)"
             android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="La hora sigue visible en el panel de control al bajar la barra."
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp" />
 
         <TextView
             android:id="@+id/tvShizukuLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="12sp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Posición de la isla"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="La isla se centra sola en la cámara. Si queda corrida, afínala aquí (se mueve en vivo si la isla está corriendo)."
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvOffsetX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Posición horizontal: 0 dp"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbOffsetX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="80"
+            android:progress="40"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvOffsetY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Posición vertical: 0 dp"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/sbOffsetY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="80"
+            android:progress="40"
             android:layout_marginBottom="8dp" />
 
         <TextView

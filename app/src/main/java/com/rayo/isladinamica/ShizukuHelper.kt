@@ -25,6 +25,18 @@ object ShizukuHelper {
     /** Status-bar slots hidden by the "Ocultar iconos" toggle. */
     const val ICON_BLACKLIST = "clock,alarm_clock"
 
+    /** SharedPreferences key for the hide-icons toggle (read by IslandService too). */
+    const val KEY_HIDE_ICONS = "hide_status_icons"
+
+    /**
+     * `cmd statusbar` disable flags (from `cmd statusbar` help). These hide
+     * the clock, the system icons and the notification icons from the status
+     * bar only — the quick-settings panel header clock is a separate view
+     * and keeps showing. Same mechanism Essentials uses
+     * (StatusBarManager.kt: "cmd statusbar send-disable-flag ...").
+     */
+    const val STATUSBAR_DISABLE_FLAGS = "clock system-icons notification-icons"
+
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -193,5 +205,19 @@ object ShizukuHelper {
             "settings put secure icon_blacklist \"$ICON_BLACKLIST\""
         } else {
             "settings delete secure icon_blacklist"
+        }
+
+    /**
+     * Hides (or restores) clock + system icons + notification icons in the
+     * status bar via `cmd statusbar`. Needs the shell (Shizuku); it is not
+     * a setting, so WRITE_SECURE_SETTINGS alone cannot do it. The flags do
+     * not survive a SystemUI restart/reboot, so IslandService re-applies
+     * them when it starts.
+     */
+    fun hideStatusBarCommand(hide: Boolean): String =
+        if (hide) {
+            "cmd statusbar send-disable-flag $STATUSBAR_DISABLE_FLAGS"
+        } else {
+            "cmd statusbar send-disable-flag none"
         }
 }
